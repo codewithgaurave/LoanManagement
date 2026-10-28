@@ -2864,14 +2864,13 @@ module.exports = {
 
 // Helper to resolve employee and isolation filters
 const resolveEmployeeAndFilters = async (req) => {
-  let empId = req.query.empId || req.query.employeeId;
+  let empId = req.query.empId || req.query.employeeId || (req.admin ? (req.admin.empId || req.admin._id) : null);
   if (!empId && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     try {
       const token = req.headers.authorization.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       if (decoded && decoded.id) {
-        const e = await Employee.findById(decoded.id);
-        if (e) empId = e.empId || e._id.toString();
+        empId = decoded.id;
       }
     } catch (err) {}
   }
@@ -2882,9 +2881,31 @@ const resolveEmployeeAndFilters = async (req) => {
       $or: [
         { empId: empId },
         { _id: mongoose.isValidObjectId(empId) ? empId : null },
+        { email: empId.toString().toLowerCase() },
         { mobile: empId }
       ].filter(Boolean)
     });
+
+    if (!employee) {
+      const adminUser = await Admin.findOne({
+        $or: [
+          { _id: mongoose.isValidObjectId(empId) ? empId : null },
+          { email: empId.toString().toLowerCase() }
+        ].filter(Boolean)
+      });
+      if (adminUser) {
+        employee = {
+          _id: adminUser._id,
+          empId: 'ADMIN-' + (adminUser.role || 'HR'),
+          name: adminUser.name,
+          email: adminUser.email,
+          role: adminUser.role,
+          designation: adminUser.role,
+          status: 'Active',
+          grossMonthly: 50000,
+        };
+      }
+    }
   }
 
   if (!employee) {
@@ -4215,16 +4236,36 @@ const getCaseTrackingData = async (req, res) => {
 
 
 
+    // 1. Fetch CASE TRACKING (All leads in active pipeline for this user/scope)
+    const caseTrackingLeads = await Lead.find(leadFilter).sort({ createdAt: -1 });
+    const caseTrackingList = caseTrackingLeads.map((l, index) => ({
+      sNo: index + 1,
+      _id: l._id,
+      leadId: l.leadId || 'N/A',
+      lanId: l.lanId || 'LAN-0000',
+      entityName: l.entityName || 'Proprietorship Entity',
+      customName: l.name || 'Customer Name',
+      mobile: l.mobile || '',
+      panNumber: l.panNumber || 'BKGPS1234F',
+      reason: l.reason || l.remarks || 'Application Under Assessment',
+      amount: l.loanAmount || l.expectedAmount || '5,00,000',
+      product: l.productSubtype || 'Personal Loan',
+      status: l.status || 'Active',
+      stage: l.initiatedStage || l.inProcessStage || l.draftStatus || l.status || 'Active',
+      createdAt: l.createdAt
+    }));
+
     // 2. Fetch PENDING Cases from MongoDB (Draft, Pending Review, Hold, Docs Pending)
+    // Matches getDashboardOverview: status matching /pending|review|new|contacted/i OR isDraft/hold/docs pending
     const pendingFilter = {
       $and: [
-        leadFilter.$or ? { $or: leadFilter.$or } : {},
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
         {
           $or: [
             { isDraft: true },
-            { status: { $regex: /pending|review|new|hold|draft/i } },
-            { draftStatus: { $in: ['Application Pending', "Doc's Pending", 'Custom HOLD'] } },
-            { inProcessStage: { $in: ['Logins', 'Lender Selection', 'Doc\'s Pending', 'Disbursal On Hold'] } }
+            { status: { $regex: /pending|review|new|hold|draft|contacted/i } },
+            { draftStatus: { $regex: /pending|hold|draft/i } },
+            { inProcessStage: { $regex: /pending|hold|logins|lender/i } }
           ]
         }
       ]
@@ -4240,7 +4281,7 @@ const getCaseTrackingData = async (req, res) => {
       customName: l.name || 'Customer Name',
       mobile: l.mobile || '',
       panNumber: l.panNumber || 'BKGPS1234F',
-      reason: l.reason || l.remarks || 'Documentation Pending from Customer',
+      reason: l.reason || l.remarks || (l.status ? `Status: ${l.status}` : 'Documentation Pending from Customer'),
       amount: l.loanAmount || l.expectedAmount || '5,00,000',
       product: l.productSubtype || 'Personal Loan',
       status: l.status || 'Pending',
@@ -4248,10 +4289,10 @@ const getCaseTrackingData = async (req, res) => {
     }));
 
     // 3. Fetch CUSTOMER's Offers from MongoDB
-    // Only leads that have an explicit offerStatus OR are at Qualified/Sanctioned/Offer stages
+    // Matches getDashboardOverview customOffers count
     const offerFilter = {
       $and: [
-        leadFilter.$or ? { $or: leadFilter.$or } : {},
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
         {
           $or: [
             { offerStatus: { $exists: true, $ne: null, $ne: '' } },
@@ -4273,8 +4314,8 @@ const getCaseTrackingData = async (req, res) => {
       customName: l.name || 'Customer Name',
       mobile: l.mobile || '',
       panNumber: l.panNumber || 'BKGPS1234F',
-      offerStatus: l.offerStatus || `Pre-Approved ₹${l.loanAmount || '15,00,000'} @ 9.99%`,
-      amount: l.offerAmount || l.loanAmount || '15,00,000',
+      offerStatus: l.offerStatus || `Pre-Approved ₹${l.loanAmount || l.expectedAmount || '15,00,000'} @ 9.99%`,
+      amount: l.offerAmount || l.loanAmount || l.expectedAmount || '15,00,000',
       product: l.productSubtype || 'UB Loan',
       createdAt: l.createdAt
     }));
@@ -4338,10 +4379,11 @@ const getCaseTrackingData = async (req, res) => {
     res.status(200).json({
       success: true,
       stats: {
-        caseTracking: pendingCasesList.length + customerOffersList.length,
+        caseTracking: caseTrackingList.length,
         pendingCases: pendingCasesList.length,
         customOffers: customerOffersList.length
       },
+      caseTrackingList,
       pendingCases: pendingCasesList,
       customerOffers: customerOffersList,
       searchResult
