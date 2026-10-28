@@ -311,8 +311,15 @@ const getHoldEscalations = async (req, res) => {
   try {
     const { zone } = req.query;
     const query = { isHoldAlertActive: true };
+    const roleLower = (req.admin?.role || '').toLowerCase();
+    const zonalLower = (req.admin?.zonalRole || '').toLowerCase();
+    const isMasterAdmin = ['super admin', 'superadmin', 'admin', 'sales head', 'sales_head'].includes(roleLower) || zonalLower === 'sales head';
+    const userZone = req.admin?.zone;
+
     if (zone && zone !== 'ALL' && zone !== 'all') {
       query.zone = zone.toUpperCase();
+    } else if (!isMasterAdmin && userZone && userZone !== 'ALL' && userZone !== 'all') {
+      query.$or = [{ zone: userZone.toUpperCase() }, { zone: userZone }];
     }
 
     const holdLeads = await Lead.find(query).sort({ holdAt: -1 });
@@ -408,7 +415,7 @@ const getPartnerBanks = async (req, res) => {
   res.status(200).json({ success: true, banks: PARTNER_BANKS });
 };
 
-// @desc    Dispatches Sales Head Approved File to Partner Bank (Executed by Operation Manager / Admin)
+// @desc    Dispatches Sales Head Approved File to Partner Bank(s) / NBFCs (Executed by Operation Manager / Admin)
 // @route   PUT /api/sales/:id/dispatch-bank
 // @access  Private (Operation Manager / Sales Head / Admin)
 const approveAndDispatchToBank = async (req, res) => {
@@ -423,7 +430,8 @@ const approveAndDispatchToBank = async (req, res) => {
       bankOfficerDesignation,
       bankContactEmail, 
       bankContactPhone, 
-      remarks 
+      remarks,
+      selectedLenders // Array of { name, shortName, code, category, defaultBranch, defaultIfsc }
     } = req.body;
 
     const lead = await Lead.findById(req.params.id);
@@ -431,8 +439,38 @@ const approveAndDispatchToBank = async (req, res) => {
       return res.status(404).json({ success: false, message: 'File not found' });
     }
 
-    if (!bankName) {
-      return res.status(400).json({ success: false, message: 'Please select a Partner Bank' });
+    // Determine lenders list
+    let lendersToDispatch = [];
+    if (Array.isArray(selectedLenders) && selectedLenders.length > 0) {
+      lendersToDispatch = selectedLenders.map(l => ({
+        name: l.name || l.shortName,
+        shortName: l.shortName || l.name,
+        code: l.code || '',
+        category: l.category || 'Commercial Bank',
+        channel: channel,
+        branch: l.defaultBranch || bankBranch || `${lead.zone || 'North'} Zonal Credit Desk`,
+        ifsc: l.defaultIfsc || bankIfsc || '',
+        contactEmail: l.contactEmail || bankContactEmail || '',
+        contactPhone: l.contactPhone || bankContactPhone || '',
+        status: 'Dispatched',
+        dispatchedAt: new Date()
+      }));
+    } else if (bankName) {
+      lendersToDispatch = [{
+        name: bankName,
+        shortName: bankName,
+        code: bankCode || '',
+        category: 'Commercial Bank',
+        channel: channel,
+        branch: bankBranch || '',
+        ifsc: bankIfsc || '',
+        contactEmail: bankContactEmail || '',
+        contactPhone: bankContactPhone || '',
+        status: 'Dispatched',
+        dispatchedAt: new Date()
+      }];
+    } else {
+      return res.status(400).json({ success: false, message: 'Please select at least one Partner Bank or NBFC' });
     }
 
     lead.workflowStage = 'Bank_Dispatched';
@@ -440,10 +478,19 @@ const approveAndDispatchToBank = async (req, res) => {
       lead.salesHeadApprovedAt = new Date();
       lead.salesHeadApprovedBy = req.admin?.name || 'Sales Head';
     }
-    lead.dispatchedBankName = bankName;
-    lead.dispatchedBankBranch = bankBranch || '';
-    lead.dispatchedBankIfsc = bankIfsc || '';
-    lead.dispatchedBankCode = bankCode || '';
+
+    // Assign multiple lenders
+    lead.dispatchedLenders = lendersToDispatch;
+
+    // Backward-compatible primary/summary bank field
+    const primaryLender = lendersToDispatch[0];
+    const totalCount = lendersToDispatch.length;
+    lead.dispatchedBankName = totalCount === 1 
+      ? primaryLender.name 
+      : `${primaryLender.shortName || primaryLender.name} +${totalCount - 1} more (${totalCount} Lenders)`;
+    lead.dispatchedBankBranch = primaryLender.branch || bankBranch || '';
+    lead.dispatchedBankIfsc = primaryLender.ifsc || bankIfsc || '';
+    lead.dispatchedBankCode = primaryLender.code || bankCode || '';
     lead.dispatchedChannel = channel;
     lead.dispatchedAt = new Date();
     lead.dispatchedBy = req.admin?.name || 'Operation Manager';
@@ -459,17 +506,22 @@ const approveAndDispatchToBank = async (req, res) => {
     await lead.save();
 
     // Create Notification
+    const lenderSummary = totalCount === 1 
+      ? primaryLender.name 
+      : `${totalCount} Banks & NBFCs (${lendersToDispatch.map(l => l.shortName || l.name).slice(0, 3).join(', ')}${totalCount > 3 ? '...' : ''})`;
+
     await Notification.create({
-      title: `Loan File Dispatched: ${lead.name} to ${bankName}`,
-      detail: `File (${lead.leadId || lead._id}) verified by Operations, approved by Sales Head, and dispatched to ${bankName} (${bankBranch || 'Central Desk'}) via ${channel}.`,
+      title: `Loan File Dispatched: ${lead.name} to ${totalCount} Lenders`,
+      detail: `File (${lead.leadId || lead._id}) verified by Operations, approved by Sales Head, and dispatched to ${lenderSummary} via ${channel}.`,
       type: 'info',
       recipientId: null
     });
 
     res.status(200).json({ 
       success: true, 
-      message: `File successfully dispatched to ${bankName} via ${channel}!`,
-      lead 
+      message: `File successfully dispatched to ${lenderSummary} via ${channel}!`,
+      lead,
+      totalLendersDispatched: totalCount
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -617,6 +669,8 @@ const customerOfferDecision = async (req, res) => {
 
     if (action === 'Accept' || action === 'Accepted') {
       lead.workflowStage = 'Customer_Accepted';
+      lead.initiatedStage = 'Approved'; // Customer accepted offer -> moves to Approved in Initiated pipeline
+      lead.inProcessStage = 'Lender Approved';
       lead.isHoldAlertActive = false;
       lead.status = 'Approved';
       lead.customerDecisionAt = new Date();
@@ -633,6 +687,8 @@ const customerOfferDecision = async (req, res) => {
       });
     } else if (action === 'Hold' || action === 'HOLD') {
       lead.workflowStage = 'Customer_HOLD';
+      lead.initiatedStage = 'Decision Hold'; // System/Customer hold -> moves to Decision Hold
+      lead.inProcessStage = 'Disbursal On Hold';
       lead.isHoldAlertActive = true;
       lead.holdReason = reason || 'Customer requested time / evaluating ROI & terms';
       lead.holdAt = new Date();
@@ -935,12 +991,13 @@ async function getRMWorkflowMetrics(req, res) {
       ...zoneFilter,
       $or: [
         { workflowStage: 'Field_Lead_Created' },
+        { workflowStage: 'RM_Telecaller_Review' },
         { workflowStage: { $exists: false } },
         { workflowStage: null },
         { workflowStage: '' },
-        { status: { $in: ['New', 'Unassigned', 'Pending', 'Application Pending', 'Draft', 'LEAD_SUBMITTED'] } }
+        { status: { $in: ['New', 'Unassigned', 'Pending', 'Application Pending', 'Draft', 'LEAD_SUBMITTED', 'Under Review'] } }
       ],
-      workflowStage: { $nin: ['RM_Telecaller_Review', 'Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
+      workflowStage: { $nin: ['Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
     });
 
     const withTelecaller = await Lead.countDocuments({
@@ -1011,27 +1068,61 @@ async function getRMLeadsForReview(req, res) {
 
     let filter = {};
     const adminZone = req.admin?.zone;
-    const roleLower = (req.admin?.role || '').toLowerCase();
-    const isMasterAdmin = ['super admin', 'superadmin', 'admin', 'sales head', 'sales_head'].includes(roleLower);
+    const adminId = req.admin?._id?.toString();
+    const adminName = req.admin?.name || '';
+    const roleLower = (req.admin?.role || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const zonalLower = (req.admin?.zonalRole || '').toLowerCase();
+    const isMasterAdmin = ['superadmin', 'admin', 'saleshead'].includes(roleLower) || ['super admin', 'sales head', 'operations head', 'operation admin'].includes((req.admin?.role || '').toLowerCase());
+    const isRRM = roleLower === 'rrm' || zonalLower === 'rrm';
+    const isARM = roleLower === 'arm' || zonalLower === 'arm';
+    const isRM  = roleLower === 'rm'  || zonalLower === 'rm';
 
-    // Apply Zone Filter (Support case-insensitive match / ALL / or unassigned zone)
-    if (zone && zone !== 'ALL' && zone !== 'all') {
-      filter.$or = [{ zone: zone.toUpperCase() }, { zone: zone }, { zone: null }, { zone: '' }, { zone: { $exists: false } }];
-    } else if (!isMasterAdmin && adminZone && adminZone !== 'ALL' && adminZone !== 'all') {
-      filter.$or = [{ zone: adminZone.toUpperCase() }, { zone: adminZone }, { zone: null }, { zone: '' }, { zone: { $exists: false } }];
+    // ─── Zone + RM Scope Filter ───────────────────────────────────────────────
+    if (isMasterAdmin) {
+      // Super Admin / Sales Head — see all zones; optionally filter by explicit zone param
+      if (zone && zone !== 'ALL' && zone !== 'all') {
+        filter.zone = zone.toUpperCase();
+      }
+    } else if (isRRM) {
+      // RRM — sees only their zone
+      const rmZone = (zone && zone !== 'ALL') ? zone.toUpperCase() : (adminZone && adminZone !== 'ALL' ? adminZone.toUpperCase() : null);
+      if (rmZone) filter.zone = rmZone;
+    } else if (isARM) {
+      // ARM — sees only their zone leads
+      const armZone = (zone && zone !== 'ALL') ? zone.toUpperCase() : (adminZone && adminZone !== 'ALL' ? adminZone.toUpperCase() : null);
+      if (armZone) filter.zone = armZone;
+      // Also restrict to leads whose armId matches this ARM
+      filter.$or = [
+        { armId: adminId },
+        { armName: adminName },
+        { zone: armZone || adminZone }
+      ];
+    } else if (isRM) {
+      // RM — sees only their zone leads + leads assigned to them
+      const rmZone = (zone && zone !== 'ALL') ? zone.toUpperCase() : (adminZone && adminZone !== 'ALL' ? adminZone.toUpperCase() : null);
+      filter.$or = [
+        { rmId: adminId },
+        { rmName: adminName },
+        ...(rmZone ? [{ zone: rmZone }] : [])
+      ];
+    } else {
+      // Other roles — zone-restricted
+      const targetZone = (zone && zone !== 'ALL') ? zone.toUpperCase() : (adminZone && adminZone !== 'ALL' ? adminZone.toUpperCase() : null);
+      if (targetZone) filter.zone = targetZone;
     }
 
     if (stage === 'pending') {
-      // Leads waiting for RM review/approval
+      // Leads for RM to review (both fresh field leads and active telecaller calling leads)
       const pendingCriteria = {
         $or: [
           { workflowStage: 'Field_Lead_Created' },
+          { workflowStage: 'RM_Telecaller_Review' },
           { workflowStage: { $exists: false } },
           { workflowStage: null },
           { workflowStage: '' },
-          { status: { $in: ['New', 'Unassigned', 'Pending', 'Application Pending', 'Draft', 'LEAD_SUBMITTED'] } }
+          { status: { $in: ['New', 'Unassigned', 'Pending', 'Application Pending', 'Draft', 'LEAD_SUBMITTED', 'Under Review'] } }
         ],
-        workflowStage: { $nin: ['RM_Telecaller_Review', 'Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
+        workflowStage: { $nin: ['Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
       };
 
       if (filter.$or) {
@@ -1107,54 +1198,74 @@ async function getRMLeadsForReview(req, res) {
   }
 }
 
-// @desc    RM reviews a lead — Approve (forward to Telecaller) or Reject
+// @desc    RM adds review notes/remarks on a lead (NO approval needed — lead already auto-forwarded to Telecaller)
 // @route   PUT /api/sales/:id/rm-review
 // @access  Private (RM / Admin)
 async function rmReviewLeadAction(req, res) {
   try {
     const { id } = req.params;
-    const { action, remarks = '' } = req.body; // action: 'Approved' | 'Rejected'
+    // action: 'Notes' (add review notes) | 'Reject' (RM can reject a bad/duplicate lead) | 'Assign_Ops' (send to Operations after Telecaller confirms)
+    const { action = 'Notes', remarks = '' } = req.body;
 
-    if (!['Approved', 'Rejected'].includes(action)) {
-      return res.status(400).json({ success: false, message: "action must be 'Approved' or 'Rejected'" });
+    if (!['Notes', 'Reject', 'Assign_Ops', 'Approved', 'Rejected'].includes(action)) {
+      return res.status(400).json({ success: false, message: "action must be 'Notes', 'Reject', or 'Assign_Ops'" });
     }
 
     const lead = await Lead.findById(id);
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
 
     const reviewerName = req.admin?.name || 'RM';
-    const { telecallerId, telecallerName } = req.body;
+    const reviewerId = req.admin?._id?.toString();
 
+    // Always save RM review notes
     lead.rmReviewedAt = new Date();
     lead.rmReviewedBy = reviewerName;
+    lead.rmReviewRemarks = remarks || lead.rmReviewRemarks;
     lead.rmReviewAction = action;
-    lead.rmReviewRemarks = remarks;
 
-    if (action === 'Approved') {
-      lead.workflowStage = 'RM_Telecaller_Review';
-      lead.status = 'Under Review';
-      if (telecallerId) lead.telecallerId = telecallerId;
-      if (telecallerName) lead.telecallerName = telecallerName;
-
-      // Notify telecaller team via notification
-      await Notification.create({
-        title: `📞 Lead Approved for Telecaller: ${lead.name}`,
-        detail: `RM ${reviewerName} (${lead.zone} Zone) has approved & assigned lead ${lead.leadId || lead.name} to ${telecallerName || 'Telecalling Desk'}. Customer: ${lead.mobile}`,
-        type: 'info',
-        recipientId: telecallerId || null
-      });
-    } else {
+    if (action === 'Reject' || action === 'Rejected') {
+      // RM can reject a bad/spam/duplicate lead
       lead.workflowStage = 'Rejected';
       lead.status = 'Rejected';
+
+      await lead.save();
+      return res.status(200).json({
+        success: true,
+        message: 'Lead rejected by RM.',
+        lead
+      });
     }
 
+    if (action === 'Assign_Ops' || action === 'Approved') {
+      // RM sends telecaller-confirmed file to Operations
+      lead.workflowStage = 'Operations_KYC_Verification';
+      lead.status = 'Under Review';
+      lead.assignedToOpsAt = new Date();
+      lead.assignedToOpsBy = reviewerName;
+      lead.operationsRemarks = remarks || 'File sent to Operations by RM.';
+
+      await Notification.create({
+        title: `📁 File Assigned to Operations: ${lead.name} (${lead.zone} Zone)`,
+        detail: `RM ${reviewerName} has sent lead ${lead.leadId || lead.name} (₹${lead.expectedAmount || 0}) to Operations for KYC Verification.`,
+        type: 'info',
+        recipientId: null
+      });
+
+      await lead.save();
+      return res.status(200).json({
+        success: true,
+        message: 'File assigned to Operations for KYC verification!',
+        lead
+      });
+    }
+
+    // Default: Just save notes/remarks without changing workflowStage
+    // Lead stays in RM_Telecaller_Review — both RM and Telecaller are working simultaneously
     await lead.save();
 
     res.status(200).json({
       success: true,
-      message: action === 'Approved'
-        ? 'Lead approved and forwarded to Telecaller team!'
-        : 'Lead rejected.',
+      message: 'RM review notes saved. Lead continues with Telecaller.',
       lead
     });
   } catch (error) {

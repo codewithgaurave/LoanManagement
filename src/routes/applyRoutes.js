@@ -56,10 +56,27 @@ router.post('/submit/:leadId', async (req, res) => {
       });
     }
 
+    const hasDocs = Array.isArray(documents) && documents.length > 0;
+
     lead.customerFormStatus = 'Completed';
     lead.customerFilledAt = new Date();
-    lead.workflowStage = 'Customer_Confirmed';
-    lead.status = 'Documents Pending';
+
+    if (hasDocs) {
+      // Customer provided full form WITH documents -> moves to Lender Selection
+      lead.workflowStage = 'Customer_Confirmed';
+      lead.inProcessStage = 'Lender Selection';
+      lead.submissionType = 'SUBMITTED';
+      lead.isDraft = false;
+      lead.status = 'Documents Pending';
+    } else {
+      // Customer submitted form WITHOUT documents -> goes to IN-DRAFT under "Doc's Pending"
+      lead.workflowStage = 'Field_Lead_Created';
+      lead.draftStatus = "Doc's Pending";
+      lead.inProcessStage = "Doc's Pending";
+      lead.isDraft = true;
+      lead.submissionType = 'LINK_GENERATED';
+      lead.status = 'Draft';
+    }
 
     const savedLead = await lead.save();
 

@@ -14,10 +14,12 @@ const {
   assignApplication,
   bulkAssignApplications,
   updateApplicationStatus,
-  updateApplication
+  updateApplication,
+  getJobFilterOptions
 } = require('../controllers/recruitmentController');
 
 // Public Routes
+router.get('/jobs-filters', getJobFilterOptions);
 router.get('/jobs', getJobs);
 router.get('/jobs/:id', getJobById);
 router.post('/jobs/:id/apply', upload.any(), applyForJob);

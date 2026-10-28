@@ -92,7 +92,8 @@ const createLead = async (req, res) => {
       createdByDesignation: req.body.createdByDesignation || creatorDesignation,
       createdByName: req.body.createdByName || creatorName,
 
-      workflowStage: req.body.workflowStage || 'Field_Lead_Created',
+      // Directly sent to both Telecaller & RM (No manual approval needed to start calling)
+      workflowStage: req.body.workflowStage || 'RM_Telecaller_Review',
       zone: targetZone,
       rrmId: req.body.rrmId || emp?.rrmId || null,
       rrmName: req.body.rrmName || emp?.rrmName || null,
@@ -119,8 +120,8 @@ const createLead = async (req, res) => {
     const createdLead = await lead.save();
 
     // Send notifications to assigned RM & Telecaller
+    const { notifyEmployeeOrZone } = require('../services/firebaseService');
     if (autoTelecaller) {
-      const { notifyEmployeeOrZone } = require('../services/firebaseService');
       await notifyEmployeeOrZone({
         recipientId: autoTelecaller._id,
         empId: autoTelecaller.empId || null,
@@ -132,7 +133,22 @@ const createLead = async (req, res) => {
           leadId: createdLead.leadId || createdLead._id.toString(),
           customerName: createdLead.name
         }
-      }).catch(e => console.warn('Notification error:', e.message));
+      }).catch(e => console.warn('Notification error (Telecaller):', e.message));
+    }
+
+    if (autoRM) {
+      await notifyEmployeeOrZone({
+        recipientId: autoRM._id,
+        empId: autoRM.empId || null,
+        zone: targetZone,
+        title: `📋 New Lead For RM Review [${targetZone} Zone]: ${createdLead.name}`,
+        body: `New lead ${createdLead.leadId || createdLead.name} created and active for review in ${targetZone} zone.`,
+        data: {
+          type: 'info',
+          leadId: createdLead.leadId || createdLead._id.toString(),
+          customerName: createdLead.name
+        }
+      }).catch(e => console.warn('Notification error (RM):', e.message));
     }
 
     res.status(201).json({ success: true, lead: createdLead });
@@ -625,17 +641,45 @@ const requestSalesHeadApproval = async (req, res) => {
   }
 };
 
-// @desc    Operation Manager Dispatches File to Partner Bank (Email/WhatsApp)
+// @desc    Operation Manager Dispatches File to Partner Bank(s) / NBFCs (Email/WhatsApp)
 // @route   POST /api/leads/:id/bank-dispatch
 // @access  Private (Operation Manager / Admin)
 const dispatchToBank = async (req, res) => {
   try {
-    const { bankName, channel = 'WhatsApp', bankEmail, bankContact } = req.body;
+    const { bankName, channel = 'WhatsApp', bankEmail, bankContact, selectedLenders } = req.body;
     const lead = await Lead.findById(req.params.id);
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
 
+    let lendersToDispatch = [];
+    if (Array.isArray(selectedLenders) && selectedLenders.length > 0) {
+      lendersToDispatch = selectedLenders.map(l => ({
+        name: l.name || l.shortName,
+        shortName: l.shortName || l.name,
+        code: l.code || '',
+        category: l.category || 'Commercial Bank',
+        channel: channel,
+        branch: l.defaultBranch || `${lead.zone || 'North'} Zonal Credit Desk`,
+        ifsc: l.defaultIfsc || '',
+        status: 'Dispatched',
+        dispatchedAt: new Date()
+      }));
+    } else {
+      lendersToDispatch = [{
+        name: bankName || 'Partner Bank',
+        shortName: bankName || 'Partner Bank',
+        category: 'Commercial Bank',
+        channel: channel,
+        status: 'Dispatched',
+        dispatchedAt: new Date()
+      }];
+    }
+
     lead.workflowStage = 'Bank_Dispatched';
-    lead.dispatchedBankName = bankName || 'Partner Bank';
+    lead.dispatchedLenders = lendersToDispatch;
+    const totalCount = lendersToDispatch.length;
+    lead.dispatchedBankName = totalCount === 1 
+      ? lendersToDispatch[0].name 
+      : `${lendersToDispatch[0].shortName || lendersToDispatch[0].name} +${totalCount - 1} more (${totalCount} Lenders)`;
     lead.dispatchedChannel = channel;
     lead.dispatchedAt = new Date();
     lead.dispatchedBy = req.admin?.name || 'Operation Manager';
@@ -644,7 +688,8 @@ const dispatchToBank = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `File dispatched to ${lead.dispatchedBankName} via ${channel} successfully.`,
-      lead
+      lead,
+      totalLendersDispatched: totalCount
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

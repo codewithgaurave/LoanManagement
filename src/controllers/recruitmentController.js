@@ -58,6 +58,69 @@ const getJobs = async (req, res) => {
   }
 };
 
+// @desc    Get distinct filter options (departments & designations) from added active jobs
+// @route   GET /api/recruitment/jobs-filters
+// @access  Public
+const getJobFilterOptions = async (req, res) => {
+  try {
+    const query = { status: 'Open', publishStatus: 'Published' };
+
+    // Find all active published jobs
+    const jobs = await Job.find(query).select('department designation title openings _id');
+
+    // Calculate hired counts for each job to ensure we only include active unfilled jobs
+    const activeJobs = [];
+    for (const job of jobs) {
+      const hiredCount = await JobApplication.countDocuments({ jobId: job._id, status: 'Hired' });
+      if (hiredCount < (job.openings || 1)) {
+        activeJobs.push(job);
+      }
+    }
+
+    // Extract unique departments from active jobs
+    const departments = Array.from(
+      new Set(
+        activeJobs
+          .map(j => (j.department || '').trim())
+          .filter(Boolean)
+      )
+    ).sort();
+
+    // Map each department to its specific designations from the added jobs
+    const departmentDesignations = {};
+    for (const dept of departments) {
+      const desigs = Array.from(
+        new Set(
+          activeJobs
+            .filter(j => (j.department || '').trim().toLowerCase() === dept.toLowerCase())
+            .flatMap(j => [j.designation, j.title])
+            .map(d => (d || '').trim())
+            .filter(Boolean)
+        )
+      ).sort();
+      departmentDesignations[dept] = desigs;
+    }
+
+    // All distinct designations across all active jobs
+    const allDesignations = Array.from(
+      new Set(
+        activeJobs
+          .flatMap(j => [j.designation, j.title])
+          .map(d => (d || '').trim())
+          .filter(Boolean)
+      )
+    ).sort();
+
+    res.status(200).json({
+      departments,
+      departmentDesignations,
+      designations: allDesignations
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get job by ID
 // @route   GET /api/recruitment/jobs/:id
 // @access  Public
@@ -955,5 +1018,6 @@ module.exports = {
   assignApplication,
   bulkAssignApplications,
   updateApplicationStatus,
-  updateApplication
+  updateApplication,
+  getJobFilterOptions
 };

@@ -1233,7 +1233,7 @@ const addAttendanceRecord = async (req, res) => {
 // @access  Public / Private
 const addLeaveRecord = async (req, res) => {
   try {
-    const { startDate, endDate, type, reason } = req.body;
+    const { startDate, endDate, type, reason, leaveDuration } = req.body;
     let empIdentifier = req.params.id || req.body.employeeId || req.body.empId || req.body.id;
 
     let employee = null;
@@ -1311,6 +1311,7 @@ const addLeaveRecord = async (req, res) => {
       startDate: startDate || new Date().toISOString().split('T')[0],
       endDate: endDate || startDate || new Date().toISOString().split('T')[0],
       type: type || 'Casual Leave',
+      leaveDuration: leaveDuration || 'Full Day',
       reason: reason || 'Personal work',
       status: 'Pending',
       assignedHr: hrName,
@@ -2092,8 +2093,10 @@ const changePassword = async (req, res) => {
 // @access  Private
 const getMyAssignedLeads = async (req, res) => {
   try {
-    const roleLower = (req.admin?.role || '').toLowerCase();
-    const isMasterAdmin = ['super admin', 'superadmin', 'admin'].includes(roleLower);
+    const rawRole = (req.admin?.role || '').toLowerCase();
+    const zonalRole = (req.admin?.zonalRole || '').toLowerCase();
+    const roleLower = rawRole.replace(/[^a-z0-9]/g, '');
+    const isMasterAdmin = ['superadmin', 'admin'].includes(roleLower) || ['super admin', 'sales head'].includes(rawRole);
     const filterEmpId = req.query.employeeId || req.query.assignedToId;
 
     let leadQuery = {};
@@ -2113,35 +2116,89 @@ const getMyAssignedLeads = async (req, res) => {
       if (!userId) {
         return res.status(401).json({ message: 'User not identified' });
       }
-      
-      const isTelecaller = roleLower.includes('tele');
+
+      const isTelecaller = rawRole.includes('tele') || zonalRole.includes('tele');
+      const isRM  = roleLower === 'rm'  || zonalRole === 'rm';
+      const isARM = roleLower === 'arm' || zonalRole === 'arm';
+      const isRRM = roleLower === 'rrm' || zonalRole === 'rrm';
       const userZone = req.admin?.zone || 'NORTH';
+      const isAllZone = !userZone || userZone === 'ALL';
 
       if (isTelecaller) {
-        // Telecaller receives leads & loan applications across ANY zone specifically assigned to them in round-robin:
+        // Telecaller: gets all leads assigned to them (by id/name) OR in their zone
+        const zoneConditions = isAllZone ? [] : [{ zone: userZone.toUpperCase() }];
         leadQuery = {
           workflowStage: { $nin: ['Disbursed', 'Rejected'] },
           $or: [
             { telecallerId: userId },
             { telecallerName: userName },
             { assignedToId: userId },
-            { assignedTo: userName }
+            { assignedTo: userName },
+            ...zoneConditions
           ]
         };
-
         loanQuery = {
           workflowStage: { $nin: ['Disbursed', 'Rejected'] },
           $or: [
             { telecallerId: userId },
             { telecallerName: userName },
             { assignedToId: userId },
-            { assignedTo: userName }
+            { assignedTo: userName },
+            ...zoneConditions
           ]
         };
+      } else if (isRM) {
+        // RM: gets leads where they are assigned as RM OR in their zone
+        const zoneConditions = isAllZone ? [] : [{ zone: userZone.toUpperCase() }];
+        leadQuery = {
+          workflowStage: { $nin: ['Rejected'] },
+          $or: [
+            { rmId: userId },
+            { rmName: userName },
+            { assignedToId: userId },
+            { assignedTo: userName },
+            ...zoneConditions
+          ]
+        };
+        loanQuery = {
+          workflowStage: { $nin: ['Rejected'] },
+          $or: [
+            { rmId: userId },
+            { rmName: userName },
+            { assignedToId: userId },
+            { assignedTo: userName },
+            ...zoneConditions
+          ]
+        };
+      } else if (isARM) {
+        // ARM: gets leads in their zone where armId matches
+        const zoneConditions = isAllZone ? [] : [{ zone: userZone.toUpperCase() }];
+        leadQuery = {
+          $or: [
+            { armId: userId },
+            { armName: userName },
+            ...zoneConditions
+          ]
+        };
+        loanQuery = { ...leadQuery };
+      } else if (isRRM) {
+        // RRM: gets all leads in their zone
+        const zoneConditions = isAllZone ? [] : [{ zone: userZone.toUpperCase() }];
+        leadQuery = {
+          $or: [
+            { rrmId: userId },
+            { rrmName: userName },
+            ...zoneConditions
+          ]
+        };
+        loanQuery = { ...leadQuery };
       } else {
+        // Default (RO/RE/Field Staff): leads created by or assigned to them
         leadQuery.$or = [
           { assignedToId: userId },
-          { assignedTo: userName }
+          { assignedTo: userName },
+          { createdById: userId },
+          { createdByName: userName }
         ];
         loanQuery.$or = [
           { assignedToId: userId },

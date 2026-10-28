@@ -501,6 +501,8 @@ const createCustomerApplication = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Loan type and amount are required' });
     }
 
+    const hasDocs = Array.isArray(documents) && documents.length > 0;
+
     const application = await LoanApplication.create({
       customer: req.user.name,
       email: req.user.email,
@@ -512,8 +514,11 @@ const createCustomerApplication = async (req, res) => {
       address: details.currentAddress?.formattedAddress || details.currentAddress?.address || '',
       pan: details.pan || '',
       aadhar: details.aadhaar || '',
-      status: 'Submitted',
+      status: hasDocs ? 'Submitted' : 'Draft',
       trackingStatus: 1,
+      inProcessStage: hasDocs ? 'Lender Selection' : "Doc's Pending",
+      draftStatus: hasDocs ? '' : "Doc's Pending",
+      isDraft: !hasDocs,
       source: 'Customer App',
       details,
       documents

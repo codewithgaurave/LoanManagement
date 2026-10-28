@@ -14,34 +14,55 @@ async function getAutoAssignedRMAndTelecaller(zone = 'NORTH') {
 
   // 1. ── FIND ZONE-SPECIFIC RM ───────────────────────────────────────
   let rm = await Employee.findOne({
-    zone: normalizedZone,
+    $or: [{ zone: normalizedZone }, { zone: 'ALL' }],
     status: 'Active',
-    $or: [
-      { zonalRole: 'RM' },
-      { role: { $regex: '^rm$', $options: 'i' } },
-      { designation: { $regex: 'reporting manager|rm', $options: 'i' } }
+    $and: [
+      {
+        $or: [
+          { zonalRole: 'RM' },
+          { role: { $regex: '^rm$', $options: 'i' } },
+          { designation: { $regex: 'reporting manager|rm', $options: 'i' } }
+        ]
+      }
     ]
   }).sort({ createdAt: 1 });
 
   // Fallback if needed
   if (!rm) {
     rm = await Employee.findOne({
-      zone: normalizedZone,
+      $or: [{ zone: normalizedZone }, { zone: 'ALL' }],
       status: 'Active',
       role: { $regex: 'rm', $options: 'i' }
     });
   }
 
-  // 2. ── FIND ALL-INDIA ACTIVE TELECALLERS & PERFORM ROUND-ROBIN ────
-  // Sort by lastAssignedLeadAt ascending (nulls first), so least recently assigned telecaller gets the lead
-  const telecallers = await Employee.find({
+  // 2. ── FIND ACTIVE TELECALLERS (Zone matching or ALL) & PERFORM ROUND-ROBIN ────
+  // First attempt: Telecallers matching target zone OR 'ALL'
+  let telecallers = await Employee.find({
     status: 'Active',
-    $or: [
-      { zonalRole: 'Telecaller' },
-      { role: { $regex: 'tele', $options: 'i' } },
-      { designation: { $regex: 'tele', $options: 'i' } }
+    $or: [{ zone: normalizedZone }, { zone: 'ALL' }],
+    $and: [
+      {
+        $or: [
+          { zonalRole: 'Telecaller' },
+          { role: { $regex: 'tele', $options: 'i' } },
+          { designation: { $regex: 'tele', $options: 'i' } }
+        ]
+      }
     ]
   }).sort({ lastAssignedLeadAt: 1, empId: 1 });
+
+  // Fallback to any active telecaller if none found in zone
+  if (!telecallers || telecallers.length === 0) {
+    telecallers = await Employee.find({
+      status: 'Active',
+      $or: [
+        { zonalRole: 'Telecaller' },
+        { role: { $regex: 'tele', $options: 'i' } },
+        { designation: { $regex: 'tele', $options: 'i' } }
+      ]
+    }).sort({ lastAssignedLeadAt: 1, empId: 1 });
+  }
 
   let assignedTelecaller = null;
 

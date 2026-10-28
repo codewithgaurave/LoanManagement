@@ -73,7 +73,7 @@ const loanApplicationSchema = new mongoose.Schema({
       'Disbursed',
       'Rejected'
     ],
-    default: 'Field_Lead_Created'
+    default: 'RM_Telecaller_Review'
   },
 
   // Zonal Sales Tree References

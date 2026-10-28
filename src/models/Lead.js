@@ -131,7 +131,7 @@ const leadSchema = new mongoose.Schema({
   // Zonal & Multi-Tier Verification Tracking
   zone: {
     type: String,
-    enum: ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL'],
+    enum: ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'ALL'],
     default: 'NORTH'
   },
   branch: { type: String, default: '' },
@@ -272,18 +272,35 @@ const leadSchema = new mongoose.Schema({
   salesHeadApprovedBy: { type: String, default: null },
   salesHeadRemarks: { type: String, default: '' },
 
-  // Partner Bank Dispatch Details
+  // Partner Bank & NBFC Dispatch Details (Supports Bulk Multi-Lender Selection)
   dispatchedBankName: { type: String, default: '' },
   dispatchedBankBranch: { type: String, default: '' },
   dispatchedBankIfsc: { type: String, default: '' },
   dispatchedBankCode: { type: String, default: '' },
-  dispatchedChannel: { type: String, enum: ['WhatsApp', 'Email', 'API', 'Portal', 'Direct Banking', ''], default: '' },
+  dispatchedChannel: { type: String, enum: ['WhatsApp', 'Email', 'API', 'Portal', 'Direct Banking', 'Email & WhatsApp', ''], default: '' },
   dispatchedAt: { type: Date, default: null },
   dispatchedBy: { type: String, default: '' },
   bankOfficerName: { type: String, default: '' },
   bankOfficerDesignation: { type: String, default: '' },
   bankOfficerEmail: { type: String, default: '' },
   bankOfficerPhone: { type: String, default: '' },
+
+  // Multi-Lender Bulk Dispatch Tracking
+  dispatchedLenders: [
+    {
+      name: { type: String, required: true },
+      shortName: { type: String },
+      code: { type: String },
+      category: { type: String, enum: ['Commercial Bank', 'NBFC', 'Housing Finance', 'Other'], default: 'Commercial Bank' },
+      channel: { type: String, default: 'Email' },
+      branch: { type: String, default: '' },
+      ifsc: { type: String, default: '' },
+      contactEmail: { type: String, default: '' },
+      contactPhone: { type: String, default: '' },
+      status: { type: String, enum: ['Dispatched', 'Under Review', 'Sanctioned', 'Rejected', 'Hold'], default: 'Dispatched' },
+      dispatchedAt: { type: Date, default: Date.now }
+    }
+  ],
 
   // Customer HOLD Escalation
   isHoldAlertActive: { type: Boolean, default: false },
