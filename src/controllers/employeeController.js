@@ -2664,9 +2664,49 @@ const getDashboardOverview = async (req, res) => {
     const pendingLeads = await Lead.countDocuments({ ...leadFilter, status: { $regex: /pending|review|new|contacted/i } });
     const assignedLeads = await Lead.countDocuments({ ...leadFilter, status: { $regex: /assigned/i } });
     const convertedLeads = await Lead.countDocuments({ ...leadFilter, status: { $regex: /approved|disbursed|converted|completed/i } });
-    const draftLoans = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /draft|in-draft/i } });
-    const submittedLoans = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /submitted|applied/i } });
-    const initiatedLoans = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /initiated|processing|in progress/i } });
+    // Calculate dynamic application counts from Lead (which powers In-Draft, Submitted, and Initiated history)
+    const draftBaseCondition = {
+      $and: [
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
+        {
+          $or: [
+            { isDraft: true },
+            { submissionType: 'LINK_GENERATED' },
+            { status: 'Draft' },
+            { draftStatus: { $in: ['Application Pending', "Doc's Pending", 'Custom HOLD', 'Not Interested', 'NPA-False', 'Draft'] } }
+          ]
+        }
+      ]
+    };
+    const submittedBaseCondition = {
+      $and: [
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
+        {
+          $or: [
+            { submissionType: 'SUBMITTED' },
+            { isDraft: false },
+            { inProcessStage: { $in: ['Logins', 'Lender Selection', 'Financial Decision', 'Lender Approved', 'Disbursal On Hold', 'Not Eligible', "Doc's Pending"] } }
+          ]
+        }
+      ]
+    };
+    const initiatedBaseCondition = {
+      ...leadFilter,
+      initiatedStage: { $exists: true, $ne: null }
+    };
+
+    let draftLoans = await Lead.countDocuments(draftBaseCondition);
+    let submittedLoans = await Lead.countDocuments(submittedBaseCondition);
+    let initiatedLoans = await Lead.countDocuments(initiatedBaseCondition);
+
+    // If LoanApplication has standalone records, add them as well
+    const extraDraft = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /draft|in-draft/i } });
+    const extraSubmitted = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /submitted|applied/i } });
+    const extraInitiated = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /initiated|processing|in progress/i } });
+
+    draftLoans += extraDraft;
+    submittedLoans += extraSubmitted;
+    initiatedLoans += extraInitiated;
 
     // Live Recent Leads strictly created by or assigned to THIS logged-in employee
     const recentLeads = await Lead.find(leadFilter)
@@ -3099,10 +3139,40 @@ const getMyLoansForApp = async (req, res) => {
 
     let loans = await LoanApplication.find(query).sort({ createdAt: -1 });
 
-    const inDraftCount = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /draft|in-draft/i } });
-    const submittedCount = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /submitted|applied/i } });
-    const initiatedCount = await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /initiated|processing|in progress/i } });
-    const totalCount = await LoanApplication.countDocuments(loanFilter);
+    const draftLeadCount = await Lead.countDocuments({
+      $and: [
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
+        {
+          $or: [
+            { isDraft: true },
+            { submissionType: 'LINK_GENERATED' },
+            { status: 'Draft' },
+            { draftStatus: { $in: ['Application Pending', "Doc's Pending", 'Custom HOLD', 'Not Interested', 'NPA-False', 'Draft'] } }
+          ]
+        }
+      ]
+    });
+    const submittedLeadCount = await Lead.countDocuments({
+      $and: [
+        leadFilter.$or ? { $or: leadFilter.$or } : (Object.keys(leadFilter).length > 0 ? leadFilter : {}),
+        {
+          $or: [
+            { submissionType: 'SUBMITTED' },
+            { isDraft: false },
+            { inProcessStage: { $in: ['Logins', 'Lender Selection', 'Financial Decision', 'Lender Approved', 'Disbursal On Hold', 'Not Eligible', "Doc's Pending"] } }
+          ]
+        }
+      ]
+    });
+    const initiatedLeadCount = await Lead.countDocuments({
+      ...leadFilter,
+      initiatedStage: { $exists: true, $ne: null }
+    });
+
+    const inDraftCount = (await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /draft|in-draft/i } })) + draftLeadCount;
+    const submittedCount = (await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /submitted|applied/i } })) + submittedLeadCount;
+    const initiatedCount = (await LoanApplication.countDocuments({ ...loanFilter, status: { $regex: /initiated|processing|in progress/i } })) + initiatedLeadCount;
+    const totalCount = inDraftCount + submittedCount + initiatedCount;
 
     res.status(200).json({
       success: true,
