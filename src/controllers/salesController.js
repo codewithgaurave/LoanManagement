@@ -1221,7 +1221,7 @@ async function rmReviewLeadAction(req, res) {
     lead.rmReviewedAt = new Date();
     lead.rmReviewedBy = reviewerName;
     lead.rmReviewRemarks = remarks || lead.rmReviewRemarks;
-    lead.rmReviewAction = action;
+    lead.rmReviewAction = (action === 'Reject' || action === 'Rejected') ? 'Rejected' : ((action === 'Assign_Ops' || action === 'Approved') ? 'Approved' : 'Notes');
 
     if (action === 'Reject' || action === 'Rejected') {
       // RM can reject a bad/spam/duplicate lead

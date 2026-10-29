@@ -257,7 +257,7 @@ const leadSchema = new mongoose.Schema({
   // RM Review Audit
   rmReviewedAt: { type: Date, default: null },
   rmReviewedBy: { type: String, default: null },
-  rmReviewAction: { type: String, enum: ['Approved', 'Rejected', ''], default: '' },
+  rmReviewAction: { type: String, enum: ['Approved', 'Rejected', 'Notes', 'Reject', 'Assign_Ops', ''], default: '' },
   rmReviewRemarks: { type: String, default: '' },
 
   telecallerConfirmedAt: { type: Date, default: null },
