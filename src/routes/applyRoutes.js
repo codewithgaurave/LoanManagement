@@ -382,7 +382,7 @@ const handleApplyPage = async (req, res) => {
               };
 
               try {
-                const res = await fetch('/api/apply/submit/${displayLeadId}', {
+                const res = await fetch('/apply/submit/' + encodeURIComponent(window.location.pathname.split("/").filter(Boolean).pop()), {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload)

@@ -94,5 +94,6 @@ app.use('/api/location', require('./routes/locationRoutes'));
 
 // Public Application Link Landing Page
 app.use('/apply', require('./routes/applyRoutes'));
+app.use('/api/apply', require('./routes/applyRoutes'));
 
 module.exports = app;
