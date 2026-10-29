@@ -2621,14 +2621,25 @@ const getDashboardOverview = async (req, res) => {
       if (empIdStr) {
         employeeCriteria.push({ createdById: empIdStr });
         employeeCriteria.push({ assignedToId: empIdStr });
+        if (mongoose.isValidObjectId(empIdStr)) {
+          employeeCriteria.push({ telecallerId: empIdStr });
+          employeeCriteria.push({ rmId: empIdStr });
+          employeeCriteria.push({ reRoId: empIdStr });
+        }
       }
-      if (empObjectIdStr) {
+      if (empObjectIdStr && mongoose.isValidObjectId(empObjectIdStr)) {
         employeeCriteria.push({ createdById: empObjectIdStr });
         employeeCriteria.push({ assignedToId: empObjectIdStr });
+        employeeCriteria.push({ telecallerId: empObjectIdStr });
+        employeeCriteria.push({ rmId: empObjectIdStr });
+        employeeCriteria.push({ reRoId: empObjectIdStr });
       }
       if (empName) {
         employeeCriteria.push({ createdByName: empName });
         employeeCriteria.push({ assignedTo: empName });
+        employeeCriteria.push({ telecallerName: empName });
+        employeeCriteria.push({ rmName: empName });
+        employeeCriteria.push({ reRoName: empName });
       }
 
       if (employeeCriteria.length > 0) {
@@ -2924,17 +2935,25 @@ const resolveEmployeeAndFilters = async (req) => {
     if (empIdStr) {
       employeeCriteria.push({ createdById: empIdStr });
       employeeCriteria.push({ assignedToId: empIdStr });
-      employeeCriteria.push({ telecallerId: empIdStr });
+      if (mongoose.isValidObjectId(empIdStr)) {
+        employeeCriteria.push({ telecallerId: empIdStr });
+        employeeCriteria.push({ rmId: empIdStr });
+        employeeCriteria.push({ reRoId: empIdStr });
+      }
     }
-    if (empObjectIdStr) {
+    if (empObjectIdStr && mongoose.isValidObjectId(empObjectIdStr)) {
       employeeCriteria.push({ createdById: empObjectIdStr });
       employeeCriteria.push({ assignedToId: empObjectIdStr });
       employeeCriteria.push({ telecallerId: empObjectIdStr });
+      employeeCriteria.push({ rmId: empObjectIdStr });
+      employeeCriteria.push({ reRoId: empObjectIdStr });
     }
     if (empName) {
       employeeCriteria.push({ createdByName: empName });
       employeeCriteria.push({ assignedTo: empName });
       employeeCriteria.push({ telecallerName: empName });
+      employeeCriteria.push({ rmName: empName });
+      employeeCriteria.push({ reRoName: empName });
     }
 
     if (employeeCriteria.length > 0) {
