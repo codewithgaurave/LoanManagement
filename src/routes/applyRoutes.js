@@ -5,6 +5,24 @@ const Lead = require('../models/Lead');
 const Notification = require('../models/Notification');
 
 // Handle Public Customer Form Submission (Online Link Upload)
+// Dedicated file upload endpoint for customer apply portal
+router.post('/upload', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const relativePath = 'uploads/' + (req.file.categorySubdir ? req.file.categorySubdir + '/' : '') + req.file.filename;
+    return res.status(200).json({
+      success: true,
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      fileUrl: relativePath
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 router.post('/submit/:leadId', async (req, res) => {
   try {
     const rawLeadId = req.params.leadId;
@@ -45,7 +63,7 @@ router.post('/submit/:leadId', async (req, res) => {
         lead.documents.push({
           type: doc.type || 'Customer Document',
           fileName: doc.fileName || `${doc.type || 'Document'}.jpg`,
-          fileUrl: doc.fileUrl || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400',
+          fileUrl: doc.fileUrl || '',
           fileUrlBack: doc.fileUrlBack || '',
           fileNameBack: doc.fileNameBack || '',
           hasBothSides: Boolean(doc.fileUrlBack),
@@ -346,13 +364,52 @@ const handleApplyPage = async (req, res) => {
               const panFile = document.getElementById('panFile').files[0];
               const bankFile = document.getElementById('bankStatementFile').files[0];
 
+              async function uploadFileDirect(file, field) {
+                if (!file) return null;
+                const fd = new FormData();
+                fd.append('file', file);
+                fd.append('field', field);
+                try {
+                  let upRes = await fetch('/api/apply/upload', { method: 'POST', body: fd });
+                  if (!upRes.ok) {
+                    upRes = await fetch('/apply/upload', { method: 'POST', body: fd });
+                  }
+                  const upData = await upRes.json();
+                  return upData.success ? upData.fileUrl : null;
+                } catch (e) {
+                  console.error('File upload failed:', e);
+                  return null;
+                }
+              }
+
+              btn.innerText = 'Uploading documents...';
+
+              let aadhaarFrontUrl = '';
+              let aadhaarBackUrl = '';
+              let panUrl = '';
+              let bankUrl = '';
+
+              if (aadhaarFront) {
+                aadhaarFrontUrl = (await uploadFileDirect(aadhaarFront, 'aadhaar')) || '';
+              }
+              if (aadhaarBack) {
+                aadhaarBackUrl = (await uploadFileDirect(aadhaarBack, 'aadhaar')) || '';
+              }
+              if (panFile) {
+                panUrl = (await uploadFileDirect(panFile, 'pan')) || '';
+              }
+              if (bankFile) {
+                bankUrl = (await uploadFileDirect(bankFile, 'bankStatement')) || '';
+              }
+
               if (aadhaarFront) {
                 docs.push({
                   type: 'Aadhaar Card',
                   fileName: aadhaarFront.name,
-                  fileUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400',
+                  fileUrl: aadhaarFrontUrl,
                   fileNameBack: aadhaarBack ? aadhaarBack.name : '',
-                  fileUrlBack: aadhaarBack ? 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400' : '',
+                  fileUrlBack: aadhaarBackUrl,
+                  hasBothSides: Boolean(aadhaarBack),
                   remark: 'Uploaded by customer online'
                 });
               }
@@ -361,7 +418,7 @@ const handleApplyPage = async (req, res) => {
                 docs.push({
                   type: 'PAN Card',
                   fileName: panFile.name,
-                  fileUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400',
+                  fileUrl: panUrl,
                   remark: 'Uploaded by customer online'
                 });
               }
@@ -370,7 +427,7 @@ const handleApplyPage = async (req, res) => {
                 docs.push({
                   type: 'Bank Statement',
                   fileName: bankFile.name,
-                  fileUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=400',
+                  fileUrl: bankUrl,
                   remark: 'Uploaded by customer online'
                 });
               }
