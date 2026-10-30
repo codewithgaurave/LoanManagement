@@ -2693,16 +2693,7 @@ const getDashboardOverview = async (req, res) => {
       }
 
       if (employeeCriteria.length > 0) {
-        if (empZone && empZone !== 'ALL') {
-          leadFilter = {
-            $and: [
-              { zone: empZone },
-              { $or: employeeCriteria }
-            ]
-          };
-        } else {
-          leadFilter = { $or: employeeCriteria };
-        }
+        leadFilter = { $or: employeeCriteria };
       } else {
         leadFilter = { _id: new mongoose.Types.ObjectId() };
       }
@@ -3070,16 +3061,7 @@ const resolveEmployeeAndFilters = async (req) => {
     }
 
     if (employeeCriteria.length > 0) {
-      if (empZone && empZone !== 'ALL') {
-        leadFilter = {
-          $and: [
-            { zone: empZone },
-            { $or: employeeCriteria }
-          ]
-        };
-      } else {
-        leadFilter = { $or: employeeCriteria };
-      }
+      leadFilter = { $or: employeeCriteria };
     } else {
       leadFilter = { _id: new mongoose.Types.ObjectId() };
     }

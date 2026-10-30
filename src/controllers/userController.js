@@ -864,26 +864,47 @@ const saveCustomerDocuments = async (req, res) => {
 // @access  Public / Private
 const getMyLoansDetailed = async (req, res) => {
   try {
-    const userId = req.user?.userId || req.query.userId || 'USR-00004';
-    const user = await User.findOne({ userId });
-    const cleanPhone = user?.phone ? user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+    const userId = req.user?.userId || req.query.userId;
+    const queryPhone = req.query.phone ? req.query.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+    const queryEmail = req.query.email ? req.query.email.trim().toLowerCase() : '';
+
+    let user = null;
+    if (userId) {
+      user = await User.findOne({ userId });
+    }
+    if (!user && queryPhone) {
+      user = await User.findOne({ phone: { $regex: queryPhone } });
+    }
+    if (!user && queryEmail) {
+      user = await User.findOne({ email: queryEmail });
+    }
+    if (!user && !userId && !queryPhone && !queryEmail) {
+      user = await User.findOne({ userId: 'USR-00004' });
+    }
+
+    const cleanPhone = queryPhone || (user?.phone ? user.phone.replace(/[^0-9]/g, '').slice(-10) : '');
+    const cleanEmail = queryEmail || (user?.email ? user.email.toLowerCase() : '');
 
     const Lead = require('../models/Lead');
 
     const customerOrConditions = [
-      { userId },
-      ...(user ? [{ mobile: user.phone }, { email: user.email }] : []),
+      ...(userId ? [{ userId }] : []),
+      ...(user ? [{ userId: user.userId }] : []),
+      ...(cleanEmail ? [{ email: cleanEmail }] : []),
       ...(cleanPhone ? [{ mobile: { $regex: cleanPhone } }] : [])
     ];
 
-    const rawLoans = await LoanApplication.find({
-      $or: customerOrConditions
-    }).sort({ createdAt: -1 });
+    let rawLoans = [];
+    if (customerOrConditions.length > 0) {
+      rawLoans = await LoanApplication.find({
+        $or: customerOrConditions
+      }).sort({ createdAt: -1 });
+    }
 
     // Also fetch live Leads created for this customer mobile/email
     const leadQuery = [];
     if (cleanPhone) leadQuery.push({ mobile: { $regex: cleanPhone } });
-    if (user?.email) leadQuery.push({ email: user.email.toLowerCase() });
+    if (cleanEmail) leadQuery.push({ email: cleanEmail });
     if (user?.name && user.name !== 'Valued Customer') leadQuery.push({ name: { $regex: new RegExp(user.name, 'i') } });
 
     const customerLeads = leadQuery.length > 0 ? await Lead.find({ $or: leadQuery }).sort({ createdAt: -1 }) : [];
