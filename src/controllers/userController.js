@@ -643,6 +643,14 @@ const createCustomerApplication = async (req, res) => {
     const hasDocs = Array.isArray(documents) && documents.length > 0;
     const cleanPhone = req.user.phone ? req.user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
+    const normalizedDocs = (documents || []).map(d => ({
+      name: d.name || d.title || d.key || 'Document',
+      type: d.type || d.key || d.name || 'KYC Document',
+      fileUrl: d.fileUrl || d.url || '',
+      status: d.status || 'Pending',
+      uploadedAt: d.uploadedAt || new Date()
+    }));
+
     const application = await LoanApplication.create({
       customer: req.user.name,
       email: req.user.email,
@@ -661,7 +669,7 @@ const createCustomerApplication = async (req, res) => {
       isDraft: !hasDocs,
       source: 'Customer App',
       details,
-      documents
+      documents: normalizedDocs
     });
 
     // Also sync/create Lead in Lead collection so Employees & Telecallers see new/again applied loan!
