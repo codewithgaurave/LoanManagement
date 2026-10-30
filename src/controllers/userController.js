@@ -675,7 +675,16 @@ const createCustomerApplication = async (req, res) => {
     // Also sync/create Lead in Lead collection so Employees & Telecallers see new/again applied loan!
     try {
       const Lead = require('../models/Lead');
-      const existingLead = cleanPhone ? await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : null;
+      const leadIdToMatch = req.body.leadId || req.body.applicationId;
+      let existingLead = null;
+      if (leadIdToMatch) {
+        existingLead = await Lead.findOne({
+          $or: [{ leadId: leadIdToMatch }, { applicationId: leadIdToMatch }]
+        });
+      }
+      if (!existingLead && cleanPhone) {
+        existingLead = await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 });
+      }
 
       if (!existingLead) {
         const leadCount = await Lead.countDocuments();
@@ -694,17 +703,24 @@ const createCustomerApplication = async (req, res) => {
           draftStatus: hasDocs ? 'Application Pending' : "Doc's Pending",
           isDraft: !hasDocs,
           source: 'Customer App',
-          documents
+          customerFormStatus: 'Completed',
+          customerFilledAt: new Date(),
+          documents: normalizedDocs
         });
       } else {
         existingLead.expectedAmount = String(amount);
         existingLead.productSubtype = loanType;
         existingLead.tenure = tenure || existingLead.tenure;
-        if (hasDocs && documents.length > 0) {
-          existingLead.documents = [...(existingLead.documents || []), ...documents];
+        if (hasDocs && normalizedDocs.length > 0) {
+          existingLead.documents = [...(existingLead.documents || []), ...normalizedDocs];
           existingLead.draftStatus = 'Application Pending';
           existingLead.status = 'Submitted';
           existingLead.isDraft = false;
+          existingLead.customerFormStatus = 'Completed';
+          existingLead.customerFilledAt = new Date();
+          existingLead.operationsRejectionRemark = null;
+          existingLead.operationsRejectedAt = null;
+          existingLead.rejectedDocumentTypes = [];
         }
         await existingLead.save();
       }

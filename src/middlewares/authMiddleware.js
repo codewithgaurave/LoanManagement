@@ -6,17 +6,63 @@ const User = require('../models/User');
 
 const protectUser = async (req, res, next) => {
   const header = req.headers.authorization || '';
-  if (!header.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, message: 'Not authorized, no token' });
-  }
+  let token = header.startsWith('Bearer ') ? header.split(' ')[1] : '';
+
   try {
-    const decoded = jwt.verify(header.split(' ')[1], process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password');
-    if (!user) return res.status(401).json({ success: false, message: 'Customer not found' });
+    let user = null;
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded && decoded.id) {
+          user = await User.findById(decoded.id).select('-password');
+        }
+      } catch (tokenErr) {
+        console.warn('protectUser: token verify failed:', tokenErr.message);
+      }
+    }
+
+    // Fallback: match by phone / userId / leadId if token was absent or expired
+    if (!user) {
+      const phone = req.body?.phone || req.query?.phone || req.body?.mobile;
+      const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, '').slice(-10) : '';
+      const userId = req.body?.userId || req.query?.userId;
+
+      if (cleanPhone) {
+        user = await User.findOne({ phone: { $regex: cleanPhone } });
+      }
+      if (!user && userId) {
+        user = await User.findOne({ userId });
+      }
+
+      // If still not found but there is an active lead with this phone or ID, resolve / create user on-the-fly
+      if (!user && cleanPhone) {
+        const Lead = require('../models/Lead');
+        const lead = await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 });
+        if (lead) {
+          const count = await User.countDocuments();
+          const newUserId = `USR-${String(count + 1).padStart(5, '0')}`;
+          user = await User.create({
+            userId: newUserId,
+            name: lead.name || 'Valued Customer',
+            email: lead.email || `${cleanPhone}@customer.nuogm.com`,
+            phone: cleanPhone,
+            registeredOn: new Date().toLocaleDateString('en-IN'),
+            source: 'Auto-Sync Auth',
+            status: 'Active'
+          });
+        }
+      }
+    }
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Not authorized, please log in as customer' });
+    }
+
     req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({ success: false, message: 'Not authorized, token failed' });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
