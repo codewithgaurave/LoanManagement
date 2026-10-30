@@ -1046,7 +1046,14 @@ const getMyLoansDetailed = async (req, res) => {
         customer: loan.customer || user?.name || 'Customer',
         mobile: loan.mobile || user?.phone || '',
         email: loan.email || user?.email || '',
-        bankName: user?.bankName || 'HDFC Bank'
+        bankName: user?.bankName || 'HDFC Bank',
+        documents: loan.documents || [],
+        customerFormStatus: (loan.documents && loan.documents.length > 0) ? 'Completed' : 'Pending',
+        customerFilledAt: loan.createdAt,
+        operationsRejectionRemark: loan.operationsRejectionRemark || null,
+        operationsRejectedAt: loan.operationsRejectedAt || null,
+        rejectedDocumentTypes: loan.rejectedDocumentTypes || [],
+        applicantDetails: loan.details || {}
       };
 
       if (isActive) {
