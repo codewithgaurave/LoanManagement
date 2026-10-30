@@ -132,7 +132,7 @@ const loanApplicationSchema = new mongoose.Schema({
   documents: [{
     type: { type: String, required: true },
     fileUrl: { type: String, required: true },
-    status: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+    status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Uploaded', 'Verified'], default: 'Pending' },
     uploadedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true, collection: 'loanapplications' });

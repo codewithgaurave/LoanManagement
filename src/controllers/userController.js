@@ -643,13 +643,21 @@ const createCustomerApplication = async (req, res) => {
     const hasDocs = Array.isArray(documents) && documents.length > 0;
     const cleanPhone = req.user.phone ? req.user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
-    const normalizedDocs = (documents || []).map(d => ({
-      name: d.name || d.title || d.key || 'Document',
-      type: d.type || d.key || d.name || 'KYC Document',
-      fileUrl: d.fileUrl || d.url || '',
-      status: d.status || 'Pending',
-      uploadedAt: d.uploadedAt || new Date()
-    }));
+    const normalizedDocs = (documents || []).map(d => {
+      let st = (d.status || 'Pending').toString();
+      if (st.toLowerCase() === 'uploaded') st = 'Pending';
+      else if (st.toLowerCase() === 'approved' || st.toLowerCase() === 'verified') st = 'Approved';
+      else if (st.toLowerCase().includes('reject')) st = 'Rejected';
+      else st = 'Pending';
+
+      return {
+        name: d.name || d.title || d.key || 'Document',
+        type: d.type || d.key || d.name || 'KYC Document',
+        fileUrl: d.fileUrl || d.url || '',
+        status: st,
+        uploadedAt: d.uploadedAt || new Date()
+      };
+    });
 
     const application = await LoanApplication.create({
       customer: req.user.name,
