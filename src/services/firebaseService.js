@@ -7,9 +7,27 @@ let firebaseInitialized = false;
 let messaging = null;
 
 try {
+  let serviceAccount = null;
   const serviceAccountPath = path.join(__dirname, '../config/firebase-service-account.json');
+
   if (fs.existsSync(serviceAccountPath)) {
-    const serviceAccount = require(serviceAccountPath);
+    serviceAccount = require(serviceAccountPath);
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    try {
+      const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8');
+      serviceAccount = JSON.parse(decoded);
+    } catch (e) {
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT_BASE64:', e.message);
+    }
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    } catch (e) {
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT env:', e.message);
+    }
+  }
+
+  if (serviceAccount) {
     if (!admin.getApps().length) {
       admin.initializeApp({
         credential: admin.cert(serviceAccount)
@@ -19,7 +37,7 @@ try {
     firebaseInitialized = true;
     console.log('✅ Firebase Admin SDK & FCM initialized successfully');
   } else {
-    console.warn('⚠️ Firebase Service Account file not found, push notifications will be skipped');
+    console.warn('⚠️ Firebase Service Account not found in file or environment, push notifications will be skipped');
   }
 } catch (err) {
   console.error('❌ Failed to initialize Firebase Admin SDK:', err.message);
