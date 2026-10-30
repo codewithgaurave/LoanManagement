@@ -5,64 +5,56 @@ const fs = require('fs');
 // Base uploads directory
 const baseUploadDir = path.join(__dirname, '../../uploads');
 
-// Subdirectories mapped by field name category
-const CATEGORY_SUBDIRS = {
-  // Photos / Avatars
-  profilePhoto: 'photos',
-  avatar: 'photos',
-  photo: 'photos',
+/**
+ * Categorize uploads into dedicated directory structures:
+ * - Customer:
+ *    - uploads/customer/profilepic/
+ *    - uploads/customer/doc/
+ * - Employee:
+ *    - uploads/employee/profilepic/
+ *    - uploads/employee/doc/
+ */
+const resolveSubdir = (req, file) => {
+  const url = (req.originalUrl || req.baseUrl || req.url || '').toLowerCase();
+  const field = (file.fieldname || '').toLowerCase();
 
-  // Resumes
-  resume: 'resumes',
-  cv: 'resumes',
+  const isProfilePic = field.includes('avatar') || 
+                       field.includes('photo') || 
+                       field.includes('profile') || 
+                       field === 'borrowerphoto' || 
+                       field === 'guarantorphoto';
 
-  // Identity / Gov ID documents
-  aadhaar: 'documents/aadhaar',
-  aadhar: 'documents/aadhaar',
-  pan: 'documents/pan',
+  // 1. Explicit Customer Routes
+  if (url.includes('/users') || url.includes('/apply') || url.includes('customer')) {
+    if (isProfilePic) {
+      return 'customer/profilepic';
+    }
+    return 'customer/doc';
+  }
 
-  // Education documents
-  degree: 'documents/education',
-  marksheet: 'documents/education',
+  // 2. Explicit Employee & Admin Routes
+  if (url.includes('/employees') || url.includes('/admin') || url.includes('/recruitment')) {
+    if (isProfilePic) {
+      return 'employee/profilepic';
+    }
+    return 'employee/doc';
+  }
 
-  // Banking documents
-  bankPassbook: 'documents/banking',
-  cheque: 'documents/banking',
+  // 3. Fallback based on field name or lead context
+  if (isProfilePic) {
+    if (field.includes('emp') || field.includes('staff')) {
+      return 'employee/profilepic';
+    }
+    return 'customer/profilepic';
+  }
 
-  // Experience / Job documents
-  offerLetter: 'documents/experience',
-  experienceLetter: 'documents/experience',
-  relievingLetter: 'documents/experience',
-  salarySlip: 'documents/salary_slips',
-  coverLetter: 'documents/cover_letters',
-
-  // Loan Documents
-  loanDoc: 'loans/documents',
-  borrowerPhoto: 'loans/photos',
-  guarantorPhoto: 'loans/photos',
-  itr: 'loans/financials',
-  bankStatement: 'loans/financials'
-};
-
-const getTargetSubdir = (fieldname) => {
-  if (!fieldname) return 'others';
-  if (CATEGORY_SUBDIRS[fieldname]) return CATEGORY_SUBDIRS[fieldname];
-  
-  // Pattern matching fallbacks
-  const lower = fieldname.toLowerCase();
-  if (lower.includes('photo') || lower.includes('avatar') || lower.includes('image')) return 'photos';
-  if (lower.includes('resume') || lower.includes('cv')) return 'resumes';
-  if (lower.includes('salary')) return 'documents/salary_slips';
-  if (lower.includes('letter')) return 'documents/letters';
-  if (lower.includes('passbook') || lower.includes('bank')) return 'documents/banking';
-  if (lower.includes('doc') || lower.includes('proof') || lower.includes('cert')) return 'documents/general';
-  
-  return 'others';
+  // Default documents
+  return 'customer/doc';
 };
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const subDir = getTargetSubdir(file.fieldname);
+    const subDir = resolveSubdir(req, file);
     const targetFolder = path.join(baseUploadDir, subDir);
 
     // Ensure category subdirectory exists
@@ -83,7 +75,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit per file
+  limits: { fileSize: 25 * 1024 * 1024 } // 25MB limit per file
 });
 
 module.exports = upload;

@@ -779,11 +779,14 @@ const getDocumentConfig = async (req, res) => {
 
 const uploadCustomerDocument = async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No document uploaded' });
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+  const sub = req.file.categorySubdir ? `${req.file.categorySubdir}/` : 'customer/doc/';
+  const relativePath = `uploads/${sub}${req.file.filename}`;
+  const fileUrl = `${req.protocol}://${req.get('host')}/${relativePath}`;
   res.status(201).json({
     success: true,
     fileUrl,
     url: fileUrl,
+    relativePath,
     fileName: req.file.originalname,
     fileSize: `${(req.file.size / (1024 * 1024)).toFixed(2)} MB`
   });
@@ -2171,7 +2174,9 @@ const uploadCustomerAvatar = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No image file uploaded' });
     }
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+    const sub = req.file.categorySubdir ? `${req.file.categorySubdir}/` : 'customer/profilepic/';
+    const relativePath = `uploads/${sub}${req.file.filename}`;
+    const fileUrl = `${req.protocol}://${req.get('host')}/${relativePath}`;
     const id = req.body.userId || req.body.id || req.body.phone || req.body.email;
 
     let user = null;

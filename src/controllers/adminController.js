@@ -295,7 +295,8 @@ const uploadAvatar = async (req, res) => {
       return res.status(404).json({ message: 'Admin not found' });
     }
 
-    const avatarUrl = `/uploads/${req.file.filename}`;
+    const sub = req.file.categorySubdir ? `${req.file.categorySubdir}/` : 'employee/profilepic/';
+    const avatarUrl = `uploads/${sub}${req.file.filename}`;
     user.avatar = avatarUrl;
     await user.save();
 
