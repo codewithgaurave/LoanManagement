@@ -13,6 +13,7 @@ const {
   updateFollowUpStatus,
   telecallerConfirmLead,
   handoverToOperations,
+  operationsRejectDocToTelecaller,
   requestSalesHeadApproval,
   dispatchToBank,
   submitBankSanctionOffer,
@@ -42,6 +43,7 @@ router.post('/:id/documents', protectAdmin, uploadLeadDocument);
 // Multi-Tier Workflow Endpoints
 router.put('/:id/telecaller-confirm', protectAdmin, telecallerConfirmLead);
 router.put('/:id/handover-operations', protectAdmin, handoverToOperations);
+router.put('/:id/operations-reject-doc', protectAdmin, operationsRejectDocToTelecaller);
 router.put('/:id/request-sales-approval', protectAdmin, requestSalesHeadApproval);
 router.post('/:id/bank-dispatch', protectAdmin, dispatchToBank);
 router.post('/:id/bank-offer', protectAdmin, submitBankSanctionOffer);

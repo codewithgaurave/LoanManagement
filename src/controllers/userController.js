@@ -69,21 +69,41 @@ const sendOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email or mobile number is required' });
     }
 
-    let user = await User.findOne({ $or: [{ phone: identifier }, { email: identifier }] });
+    const cleanPhone = identifier.replace(/[^0-9]/g, '').slice(-10);
+    const Lead = require('../models/Lead');
+    const existingLead = cleanPhone ? await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : null;
+
+    let user = await User.findOne({ 
+      $or: [
+        { phone: identifier }, 
+        { email: identifier },
+        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
+      ] 
+    });
+
     if (!user) {
-      // Auto-register pending customer profile if not registered yet
+      // Auto-register customer profile with details from existing Lead if found
       const count = await User.countDocuments();
       const userId = `USR-${String(count + 1).padStart(5, '0')}`;
       const isEmail = identifier.includes('@');
+      const resolvedName = existingLead?.name || (isEmail ? identifier.split('@')[0] : 'Valued Customer');
+      const resolvedEmail = existingLead?.email || (isEmail ? identifier : `${cleanPhone || 'customer'}@customer.nuogm.com`);
+
       user = await User.create({
         userId,
-        name: isEmail ? identifier.split('@')[0] : 'Valued Customer',
-        email: isEmail ? identifier : `${identifier}@customer.nuogm.com`,
-        phone: isEmail ? '' : identifier.replace(/[^0-9]/g, '').slice(-10),
+        name: resolvedName,
+        email: resolvedEmail,
+        phone: cleanPhone || (isEmail ? '' : identifier),
         registeredOn: new Date().toLocaleDateString('en-IN'),
-        source: 'App',
+        source: 'Lead Sync / App',
         status: 'Active'
       });
+    } else if (existingLead && (!user.name || user.name === 'Valued Customer')) {
+      user.name = existingLead.name || user.name;
+      if (existingLead.email && !user.email.includes('@customer.nuogm.com')) {
+        user.email = existingLead.email;
+      }
+      await user.save();
     }
 
     if (user.status === 'Blocked') {
@@ -123,8 +143,42 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email/mobile and OTP are required' });
     }
 
-    const user = await User.findOne({ $or: [{ phone: identifier }, { email: identifier }] });
-    if (!user) return res.status(404).json({ success: false, message: 'Email or mobile number is not registered.' });
+    const cleanPhone = identifier.replace(/[^0-9]/g, '').slice(-10);
+    const Lead = require('../models/Lead');
+    const existingLead = cleanPhone ? await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : null;
+
+    let user = await User.findOne({ 
+      $or: [
+        { phone: identifier }, 
+        { email: identifier },
+        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
+      ] 
+    });
+
+    if (!user) {
+      const count = await User.countDocuments();
+      const userId = `USR-${String(count + 1).padStart(5, '0')}`;
+      const isEmail = identifier.includes('@');
+      const resolvedName = existingLead?.name || (isEmail ? identifier.split('@')[0] : 'Valued Customer');
+      const resolvedEmail = existingLead?.email || (isEmail ? identifier : `${cleanPhone || 'customer'}@customer.nuogm.com`);
+
+      user = await User.create({
+        userId,
+        name: resolvedName,
+        email: resolvedEmail,
+        phone: cleanPhone || (isEmail ? '' : identifier),
+        panNumber: existingLead?.panNumber || '',
+        registeredOn: new Date().toLocaleDateString('en-IN'),
+        source: existingLead ? 'Lead Sync' : 'App First Login',
+        status: 'Active'
+      });
+    } else if (existingLead && (!user.name || user.name === 'Valued Customer')) {
+      user.name = existingLead.name || user.name;
+      if (existingLead.email && !user.email.includes('@customer.nuogm.com')) {
+        user.email = existingLead.email;
+      }
+      await user.save();
+    }
 
     if (user.status === 'Blocked') {
       return res.status(403).json({ success: false, message: 'Your account has been blocked. Contact support.' });
@@ -134,26 +188,33 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
     }
 
-    if (new Date() > user.otpExpires) {
+    if (user.otpExpires && new Date() > user.otpExpires) {
       return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
     }
 
-    // Clear OTP after successful verification
+    // Clear OTP after successful verification & Save FCM token if sent
     user.otp = undefined;
     user.otpExpires = undefined;
     user.lastLogin = new Date().toLocaleDateString('en-IN');
+    if (req.body.fcmToken) {
+      user.fcmToken = req.body.fcmToken;
+    }
     await user.save();
 
     const token = generateToken(user._id, 'customer');
     const userObj = user.toObject();
     delete userObj.password;
     delete userObj.otp;
+    const hasMpin = Boolean(userObj.mpin);
+    delete userObj.mpin;
+    userObj.hasMpin = hasMpin;
 
     res.json({
       success: true,
       message: 'Login successful',
       token,
       user: userObj,
+      hasMpin,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -172,7 +233,14 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email/mobile and password are required' });
     }
 
-    const user = await User.findOne({ $or: [{ phone: identifier }, { email: identifier }] });
+    const cleanPhone = identifier.replace(/[^0-9]/g, '').slice(-10);
+    const user = await User.findOne({ 
+      $or: [
+        { phone: identifier }, 
+        { email: identifier },
+        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
+      ] 
+    });
     if (!user) return res.status(401).json({ success: false, message: 'Email or mobile number is not registered.' });
 
     if (user.status === 'Blocked') {
@@ -274,9 +342,45 @@ const loginWithCustomerMpin = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Mobile number and MPIN are required' });
     }
 
-    const user = await User.findOne({ $or: [{ phone: identifier }, { email: identifier }] });
+    const cleanPhone = identifier.replace(/[^0-9]/g, '').slice(-10);
+    const Lead = require('../models/Lead');
+    const existingLead = cleanPhone ? await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : null;
+
+    let user = await User.findOne({ 
+      $or: [
+        { phone: identifier }, 
+        { email: identifier },
+        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
+      ] 
+    });
+
     if (!user) {
-      return res.status(404).json({ success: false, message: 'Account not found. Please register or verify with OTP first.' });
+      // Auto-create customer account linked to Lead (if exists) or fresh for new customer
+      const count = await User.countDocuments();
+      const userId = `USR-${String(count + 1).padStart(5, '0')}`;
+      const isEmail = identifier.includes('@');
+      const resolvedName = existingLead?.name || (isEmail ? identifier.split('@')[0] : 'Valued Customer');
+      const resolvedEmail = existingLead?.email || (isEmail ? identifier : `${cleanPhone || 'customer'}@customer.nuogm.com`);
+
+      user = await User.create({
+        userId,
+        name: resolvedName,
+        email: resolvedEmail,
+        phone: cleanPhone || (isEmail ? '' : identifier),
+        panNumber: existingLead?.panNumber || '',
+        registeredOn: new Date().toLocaleDateString('en-IN'),
+        source: existingLead ? 'Lead Sync' : 'App First Login',
+        status: 'Active'
+      });
+
+      return res.status(200).json({
+        success: false,
+        requiresMpinSetup: true,
+        message: existingLead
+          ? `Welcome ${existingLead.name}! Please login with OTP to setup your MPIN.`
+          : 'Welcome! Please login with OTP to setup your secure MPIN.',
+        user: { userId, name: resolvedName, phone: cleanPhone }
+      });
     }
 
     if (user.status === 'Blocked') {
@@ -284,7 +388,7 @@ const loginWithCustomerMpin = async (req, res) => {
     }
 
     if (!user.mpin) {
-      return res.status(400).json({
+      return res.status(200).json({
         success: false,
         requiresMpinSetup: true,
         message: 'MPIN is not set yet. Please login via OTP and set your MPIN.',
@@ -297,6 +401,12 @@ const loginWithCustomerMpin = async (req, res) => {
     }
 
     user.lastLogin = new Date().toLocaleDateString('en-IN');
+    if (req.body.fcmToken) {
+      user.fcmToken = req.body.fcmToken;
+    }
+    if (existingLead && (!user.name || user.name === 'Valued Customer')) {
+      user.name = existingLead.name;
+    }
     await user.save();
 
     const token = generateToken(user._id, 'customer');
@@ -304,6 +414,7 @@ const loginWithCustomerMpin = async (req, res) => {
     delete userObj.password;
     delete userObj.otp;
     delete userObj.mpin;
+    userObj.hasMpin = true;
 
     res.status(200).json({
       success: true,
@@ -451,6 +562,21 @@ const updateCustomerFcmToken = async (req, res) => {
       user = await User.findById(req.user._id);
       if (!user) employee = await Employee.findById(req.user._id);
     } 
+
+    // If Authorization Bearer header is present and req.user wasn't attached by middleware
+    if (!user && !employee && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded && decoded.id) {
+          user = await User.findById(decoded.id);
+          if (!user) {
+            employee = await Employee.findById(decoded.id) || await Employee.findOne({ empId: decoded.id });
+          }
+        }
+      } catch (_) {}
+    } 
     
     if (!user && !employee && userId) {
       user = await User.findOne({ userId });
@@ -469,8 +595,21 @@ const updateCustomerFcmToken = async (req, res) => {
     } 
     
     if (!user && !employee && phone) {
-      user = await User.findOne({ phone });
-      if (!user) employee = await Employee.findOne({ mobile: phone });
+      const clean10 = phone.replace(/[^0-9]/g, '').slice(-10);
+      user = await User.findOne({
+        $or: [
+          { phone },
+          ...(clean10 ? [{ phone: { $regex: clean10 } }] : [])
+        ]
+      });
+      if (!user) {
+        employee = await Employee.findOne({
+          $or: [
+            { mobile: phone },
+            ...(clean10 ? [{ mobile: { $regex: clean10 } }] : [])
+          ]
+        });
+      }
     }
 
     console.log(`[FCM-TOKEN] update request received for userId=${userId || ''}, email=${email || ''}, foundUser=${!!user}, foundEmp=${!!employee}`);
@@ -502,6 +641,7 @@ const createCustomerApplication = async (req, res) => {
     }
 
     const hasDocs = Array.isArray(documents) && documents.length > 0;
+    const cleanPhone = req.user.phone ? req.user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
 
     const application = await LoanApplication.create({
       customer: req.user.name,
@@ -510,7 +650,7 @@ const createCustomerApplication = async (req, res) => {
       userId: req.user.userId,
       loanType,
       amount: String(amount),
-      tenure: tenure || '12 Months',
+      tenure: tenure || '24 Months',
       address: details.currentAddress?.formattedAddress || details.currentAddress?.address || '',
       pan: details.pan || '',
       aadhar: details.aadhaar || '',
@@ -523,6 +663,46 @@ const createCustomerApplication = async (req, res) => {
       details,
       documents
     });
+
+    // Also sync/create Lead in Lead collection so Employees & Telecallers see new/again applied loan!
+    try {
+      const Lead = require('../models/Lead');
+      const existingLead = cleanPhone ? await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : null;
+
+      if (!existingLead) {
+        const leadCount = await Lead.countDocuments();
+        const leadId = `LD-${String(leadCount + 1).padStart(5, '0')}`;
+        await Lead.create({
+          leadId,
+          name: req.user.name || details.fullName || 'Customer',
+          mobile: req.user.phone || cleanPhone,
+          email: req.user.email,
+          panNumber: details.pan || '',
+          productCategory: loanType,
+          productSubtype: loanType,
+          expectedAmount: String(amount),
+          tenure: tenure || '24 Months',
+          status: hasDocs ? 'Submitted' : 'In-Draft',
+          draftStatus: hasDocs ? 'Application Pending' : "Doc's Pending",
+          isDraft: !hasDocs,
+          source: 'Customer App',
+          documents
+        });
+      } else {
+        existingLead.expectedAmount = String(amount);
+        existingLead.productSubtype = loanType;
+        existingLead.tenure = tenure || existingLead.tenure;
+        if (hasDocs && documents.length > 0) {
+          existingLead.documents = [...(existingLead.documents || []), ...documents];
+          existingLead.draftStatus = 'Application Pending';
+          existingLead.status = 'Submitted';
+          existingLead.isDraft = false;
+        }
+        await existingLead.save();
+      }
+    } catch (leadSyncErr) {
+      console.warn('Lead sync error on customer application:', leadSyncErr.message);
+    }
 
     res.status(201).json({ success: true, application });
   } catch (error) {
@@ -683,13 +863,27 @@ const getMyLoansDetailed = async (req, res) => {
   try {
     const userId = req.user?.userId || req.query.userId || 'USR-00004';
     const user = await User.findOne({ userId });
+    const cleanPhone = user?.phone ? user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+
+    const Lead = require('../models/Lead');
+
+    const customerOrConditions = [
+      { userId },
+      ...(user ? [{ mobile: user.phone }, { email: user.email }] : []),
+      ...(cleanPhone ? [{ mobile: { $regex: cleanPhone } }] : [])
+    ];
 
     const rawLoans = await LoanApplication.find({
-      $or: [
-        { userId },
-        ...(user ? [{ mobile: user.phone }, { email: user.email }] : [])
-      ]
+      $or: customerOrConditions
     }).sort({ createdAt: -1 });
+
+    // Also fetch live Leads created for this customer mobile/email
+    const leadQuery = [];
+    if (cleanPhone) leadQuery.push({ mobile: { $regex: cleanPhone } });
+    if (user?.email) leadQuery.push({ email: user.email.toLowerCase() });
+    if (user?.name && user.name !== 'Valued Customer') leadQuery.push({ name: { $regex: new RegExp(user.name, 'i') } });
+
+    const customerLeads = leadQuery.length > 0 ? await Lead.find({ $or: leadQuery }).sort({ createdAt: -1 }) : [];
 
     const activeLoans = [];
     const closedLoans = [];
@@ -805,6 +999,72 @@ const getMyLoansDetailed = async (req, res) => {
         closedLoans.push(formattedLoan);
       } else {
         pendingLoans.push(formattedLoan);
+      }
+    }
+
+    // If customer has leads created by employees, format them into pendingLoans / allLoans
+    for (const lead of customerLeads) {
+      const amountNum = parseFloat(String(lead.loanAmount || lead.expectedAmount || lead.requiredAmount || '500000').replace(/[^0-9.]/g, '')) || 500000;
+      const tenureMonths = parseInt(String(lead.tenure || '36').replace(/[^0-9]/g, '')) || 36;
+      const interestRateVal = 10.5;
+      const monthlyRate = (interestRateVal / 12) / 100;
+      const emi = Math.round((amountNum * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1));
+
+      const isApproved = /approved|sanctioned|disbursed/i.test(lead.status || '');
+      const formattedLead = {
+        _id: lead._id,
+        applicationId: lead.leadId || `LEAD-${lead._id.toString().substring(18)}`,
+        leadId: lead.leadId || '',
+        loanType: lead.productSubtype || lead.productCategory || 'Business Loan',
+        lender: lead.lenderName || 'NUOG Housing Payments Ltd.',
+        entityName: lead.entityName || lead.name || user?.name || 'Customer Entity',
+        customName: lead.name || user?.name || 'Customer Name',
+        accountNumber: 'XXXXX1234',
+        ifscCode: 'ABCD0123456',
+        approvedAmount: `₹ ${amountNum.toLocaleString('en-IN')}`,
+        disbursedAmount: `₹ ${amountNum.toLocaleString('en-IN')}`,
+        monthlyEmi: `₹ ${emi.toLocaleString('en-IN')}`,
+        rateOfInterest: `${interestRateVal}% p.a.`,
+        loanDuration: `${tenureMonths} Months`,
+        totalAmount: `₹ ${(emi * tenureMonths).toLocaleString('en-IN')}`,
+        principleAmount: `₹ ${amountNum.toLocaleString('en-IN')}`,
+        offerStatus: lead.offerStatus || (isApproved ? 'ACCEPTED' : 'WAITING'),
+        amount: `₹ ${amountNum.toLocaleString('en-IN')}`,
+        expectedAmount: `₹ ${amountNum.toLocaleString('en-IN')}`,
+        rawAmount: amountNum,
+        tenure: `${tenureMonths} Months`,
+        status: isApproved ? 'Active' : (lead.isDraft ? 'In-Draft' : 'Submitted (In-Process)'),
+        trackingStatus: isApproved ? 4 : 2,
+        draftStatus: lead.draftStatus || 'Application Pending',
+        inProcessStage: lead.inProcessStage || 'Logins',
+        documents: lead.documents || [],
+        customerFormStatus: lead.customerFormStatus || (lead.documents && lead.documents.length > 0 ? 'Completed' : 'Pending'),
+        customerFilledAt: lead.customerFilledAt,
+        workflowStage: lead.workflowStage || 'RM_Telecaller_Review',
+        operationsRejectionRemark: lead.operationsRejectionRemark || null,
+        operationsRejectedAt: lead.operationsRejectedAt || null,
+        rejectedDocumentTypes: lead.rejectedDocumentTypes || [],
+        zone: lead.zone || 'NORTH',
+        applicantDetails: {
+          fullName: lead.name,
+          phone: lead.mobile,
+          email: lead.email,
+          pan: lead.panNumber,
+          aadhaar: lead.aadhaarApc,
+          constitution: lead.constitutionType,
+          financialProgram: lead.financialProgram,
+          facilityType: lead.facilityType,
+          currentAddress: lead.address || (lead.currentAddressDetails ? lead.currentAddressDetails.formattedAddress : ''),
+          city: lead.city,
+          state: lead.state,
+          pincode: lead.pincode
+        }
+      };
+
+      if (isApproved) {
+        activeLoans.push(formattedLead);
+      } else {
+        pendingLoans.push(formattedLead);
       }
     }
 
@@ -949,8 +1209,41 @@ const submitRepayRequest = async (req, res) => {
 // @access  Private (customer)
 const getMyApplications = async (req, res) => {
   try {
-    const applications = await LoanApplication.find({ userId: req.user.userId }).sort({ createdAt: -1 });
-    res.json({ success: true, applications });
+    const cleanPhone = req.user.phone ? req.user.phone.replace(/[^0-9]/g, '').slice(-10) : '';
+    const rawApplications = await LoanApplication.find({
+      $or: [
+        { userId: req.user.userId },
+        ...(cleanPhone ? [{ mobile: { $regex: cleanPhone } }] : [])
+      ]
+    }).sort({ createdAt: -1 });
+
+    const Lead = require('../models/Lead');
+    const customerLeads = cleanPhone ? await Lead.find({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 }) : [];
+
+    const existingAppIds = new Set(rawApplications.map(a => a.applicationId || a.leadId));
+    const mappedLeads = customerLeads
+      .filter(l => !existingAppIds.has(l.leadId))
+      .map(l => ({
+        _id: l._id,
+        applicationId: l.leadId || `LEAD-${l._id.toString().substring(18)}`,
+        leadId: l.leadId,
+        loanType: l.productSubtype || l.productCategory || 'Personal Loan',
+        amount: l.expectedAmount || l.loanAmount || '0',
+        tenure: l.tenure || '24 Months',
+        status: l.approvalStage === 'DISBURSED' ? 'Disbursed' : (l.isDraft ? 'In-Draft' : 'Submitted'),
+        draftStatus: l.draftStatus || 'Application Pending',
+        documents: l.documents || [],
+        createdAt: l.createdAt,
+        customer: l.name,
+        mobile: l.mobile,
+        isLead: true,
+        formLink: `/apply?leadId=${l.leadId}&phone=${cleanPhone}`
+      }));
+
+    res.json({
+      success: true,
+      applications: [...rawApplications, ...mappedLeads]
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1831,9 +2124,25 @@ const getUserProfile = async (req, res) => {
       user = await User.findById(req.user._id);
     }
 
-    // 5. Fallback only if no specific user requested
-    if (!user && !id && !req.query.phone && !req.query.userId) {
-      user = await User.findOne({ status: 'Active' }) || await User.findOne({});
+    // 5. If user still not found, check if a Lead exists for this phone and auto-create
+    const cleanIdPhone = (id || req.query.phone || '').replace(/[^0-9]/g, '').slice(-10);
+    if (!user && cleanIdPhone) {
+      const Lead = require('../models/Lead');
+      const lead = await Lead.findOne({ mobile: { $regex: cleanIdPhone } }).sort({ createdAt: -1 });
+      if (lead) {
+        const count = await User.countDocuments();
+        const userId = `USR-${String(count + 1).padStart(5, '0')}`;
+        user = await User.create({
+          userId,
+          name: lead.name,
+          email: lead.email || `${cleanIdPhone}@customer.nuogm.com`,
+          phone: cleanIdPhone,
+          panNumber: lead.panNumber || '',
+          registeredOn: new Date().toLocaleDateString('en-IN'),
+          source: 'Lead Sync',
+          status: 'Active'
+        });
+      }
     }
 
     if (!user) {

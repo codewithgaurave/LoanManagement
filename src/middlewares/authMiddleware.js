@@ -226,13 +226,18 @@ const protectLeadCreate = async (req, res, next) => {
       
       let admin = await Admin.findById(decoded.id).select('-password');
       if (!admin) {
-        const emp = await Employee.findById(decoded.id).select('-password');
+        const emp = await Employee.findById(decoded.id).select('-password') ||
+                    await Employee.findOne({ empId: decoded.id }).select('-password');
         if (emp) {
           admin = {
             _id: emp._id,
+            empId: emp.empId,
             name: emp.name,
             email: emp.email,
             role: emp.role || 'EMPLOYEE',
+            zonalRole: emp.zonalRole || emp.role,
+            designation: emp.designation,
+            zone: emp.zone || 'NORTH',
             permissions: emp.permissions || [],
           };
         }
@@ -262,9 +267,13 @@ const protectLeadCreate = async (req, res, next) => {
       if (emp) {
         req.admin = {
           _id: emp._id,
+          empId: emp.empId,
           name: emp.name,
           email: emp.email,
           role: emp.role || 'EMPLOYEE',
+          zonalRole: emp.zonalRole || emp.role,
+          designation: emp.designation,
+          zone: emp.zone || 'NORTH',
           permissions: emp.permissions || [],
         };
         return next();

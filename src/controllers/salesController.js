@@ -388,7 +388,7 @@ const logHoldFollowUp = async (req, res) => {
 const getPendingSalesHeadApprovals = async (req, res) => {
   try {
     const { zone } = req.query;
-    const query = { workflowStage: { $in: ['Sales_Head_Approval_Pending', 'Operations_KYC_Verification'] } };
+    const query = { workflowStage: 'Sales_Head_Approval_Pending' };
     if (zone && zone !== 'ALL' && zone !== 'all') {
       query.zone = zone.toUpperCase();
     }

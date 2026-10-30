@@ -32,6 +32,27 @@ const employeeSchema = new mongoose.Schema({
     enum: ['Active', 'Inactive'],
     default: 'Active'
   },
+  joiningDate: {
+    type: Date,
+    default: Date.now
+  },
+  shift: {
+    type: String,
+    default: '24/7'
+  },
+  shiftTiming: {
+    type: String,
+    default: '24/7 Unrestricted'
+  },
+  dutyStatus: {
+    type: String,
+    enum: ['ON DUTY', 'OFF DUTY'],
+    default: 'ON DUTY'
+  },
+  dutyStartTime: {
+    type: Date,
+    default: Date.now
+  },
   // Late Login Lock & HR Approval fields
   isLateLocked: {
     type: Boolean,
@@ -220,6 +241,17 @@ const employeeSchema = new mongoose.Schema({
   // Re-upload link (generated when senior rejects any document)
   reuploadToken: { type: String, default: '' },
   reuploadTokenExpiry: { type: Date, default: null },
+
+  // Company Issued Documents (Offer Letter, Performance Certificate, Appointment Letter, Appraisal Letter, etc.)
+  companyDocuments: [{
+    title: { type: String, required: true },
+    type: { type: String, enum: ['Offer Letter', 'Appointment Letter', 'Performance Certificate', 'Appraisal Letter', 'Relieving Letter', 'Policy Document', 'Other'], default: 'Other' },
+    issuedDate: { type: Date, default: Date.now },
+    documentNo: { type: String },
+    fileUrl: { type: String, default: '' },
+    description: { type: String, default: '' },
+    issuedBy: { type: String, default: 'HAUS NUO-PAY HR' }
+  }],
 
   // Attendance
   attendance: [{

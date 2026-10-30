@@ -17,13 +17,16 @@ const {
   getEmployeeProfile, updateEmployeeProfile, uploadEmployeeAvatar, uploadEmployeeAvatarById, getMyLeavesForApp,
   getLeaderboardAndProgress, getHelpSupportData,
   submitUnblockQuery, checkUnblockStatus, getPendingUnblockQueries, processUnblockQuery,
-  submitEmployeeFeedback
+  submitEmployeeFeedback,
+  updateEmployeeShiftStatus, getEmployeeDocumentsForApp, getMyAttendanceForApp
 } = require('../controllers/employeeController');
 const { protectAdmin, checkPermission } = require('../middlewares/authMiddleware');
+const { updateCustomerFcmToken } = require('../controllers/userController');
 const upload = require('../middlewares/uploadMiddleware');
 
 // Public Routes
 router.post('/login', loginEmployee);
+router.post('/fcm-token', updateCustomerFcmToken);
 router.post('/guest-login', guestLoginEmployee);
 router.post('/request-unblock', submitUnblockQuery);
 router.get('/check-unblock-status', checkUnblockStatus);
@@ -48,6 +51,9 @@ router.get('/notifications', getEmployeeNotifications);
 router.put('/notifications/:id/read', markEmployeeNotificationAsRead);
 router.put('/notifications/mark-all-read', markAllEmployeeNotificationsAsRead);
 router.post('/feedback', submitEmployeeFeedback);
+router.put('/shift-status', updateEmployeeShiftStatus);
+router.get('/documents', getEmployeeDocumentsForApp);
+router.get('/my-attendance', getMyAttendanceForApp);
 
 // Profile Routes
 // Note: We'll reuse protectAdmin middleware since it already authenticates Employee tokens too!

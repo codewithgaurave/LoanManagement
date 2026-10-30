@@ -181,6 +181,13 @@ const sendBroadcast = async (req, res) => {
             { empId: targetId }
           ].filter(Boolean)
         });
+        // Fallback: If targetId was an Admin ID from /api/admin/all, find matching Employee by Admin document
+        if (!emp && targetId.match(/^[0-9a-fA-F]{24}$/)) {
+          const adminDoc = await Admin.findById(targetId);
+          if (adminDoc && adminDoc.email) {
+            emp = await Employee.findOne({ email: adminDoc.email.toLowerCase() });
+          }
+        }
       }
       if (!emp && targetEmail) {
         emp = await Employee.findOne({ email: targetEmail.toLowerCase() });

@@ -11,16 +11,17 @@ const { getAutoAssignedRMAndTelecaller } = require('../utils/leadAssignmentHelpe
 const createLead = async (req, res) => {
   try {
     const emp = req.admin ? await Employee.findById(req.admin._id) : null;
+    const resolvedEmpId = emp?.empId || req.admin?.empId || req.body.createdByEmpId || req.body.createdById;
     const targetZone = (req.body.zone || emp?.zone || req.admin?.zone || 'NORTH').toUpperCase();
 
     // 1. Auto-assign Zone RM & Alternate Telecaller (Round-Robin Pan-India)
     const { rm: autoRM, telecaller: autoTelecaller } = await getAutoAssignedRMAndTelecaller(targetZone);
 
-    const isEmployeeGenerated = Boolean(req.admin || req.body.createdById);
-    const creatorName = emp ? emp.name : (req.admin ? `${req.admin.firstName || req.admin.name || ''}`.trim() : 'Customer Direct');
+    const isEmployeeGenerated = Boolean(req.admin || req.body.createdById || req.body.createdByEmpId);
+    const creatorName = emp ? emp.name : (req.admin ? `${req.admin.firstName || req.admin.name || ''}`.trim() : (req.body.createdByName || 'Customer Direct'));
     const creatorDesignation = emp ? (emp.designation || emp.zonalRole || emp.role) : (req.admin ? req.admin.role : 'Customer Self');
     const creatorRole = emp ? (emp.zonalRole || emp.role) : (req.admin ? req.admin.role : 'Customer');
-    const creatorEmpId = emp ? emp.empId : null;
+    const creatorEmpId = resolvedEmpId || null;
 
     // Normalization for Mobile App & Web inputs to match Schema Enums
     const rawProgram = (req.body.programType || 'FRESH').toString().trim().toUpperCase();
@@ -74,8 +75,40 @@ const createLead = async (req, res) => {
     };
     const normalizedFinancialProgram = financialMap[rawFinancial] || 'ABB';
 
+    // Pipeline Stage & Draft Classification:
+    // When a lead is initiated/added:
+    // - Default goes to Draft with draftStatus: 'Application Pending'
+    // - If documents are missing, 'Doc\'s Pending'
+    // - If marked as on hold, 'Custom HOLD'
+    const docs = Array.isArray(req.body.documents) ? req.body.documents : [];
+    const hasUploadedDocs = docs.length > 0;
+    const isHold = Boolean(req.body.isHold || req.body.holdReason || req.body.draftStatus === 'Custom HOLD');
+
+    let initialIsDraft = true;
+    let initialDraftStatus = 'Application Pending';
+    let initialInProcessStage = req.body.inProcessStage || 'Logins';
+    let initialStatus = 'In-Draft';
+
+    if (isHold) {
+      initialDraftStatus = 'Custom HOLD';
+      initialStatus = 'HOLD';
+    } else if (req.body.draftStatus === "Doc's Pending" || req.body.draftStatus === 'Documents Pending') {
+      initialDraftStatus = "Doc's Pending";
+      initialStatus = 'Documents Pending';
+    } else if (req.body.isDraft === false && hasUploadedDocs) {
+      // If user submits with all documents uploaded, it qualifies for Submitted (In-Process)
+      initialIsDraft = false;
+      initialDraftStatus = 'Application Pending';
+      initialStatus = 'Submitted';
+    }
+
     const leadData = {
       ...req.body,
+      isDraft: req.body.isDraft !== undefined ? req.body.isDraft : initialIsDraft,
+      draftStatus: req.body.draftStatus || initialDraftStatus,
+      inProcessStage: initialInProcessStage,
+      status: req.body.status || initialStatus,
+      submissionType: initialIsDraft ? 'LINK_GENERATED' : 'SUBMITTED',
       name: req.body.name || req.body.customName || 'Customer',
       mobile: req.body.mobile || req.body.mobNo || '',
       programType: normalizedProgramType,
@@ -86,8 +119,8 @@ const createLead = async (req, res) => {
       // Generator & Source Tracking
       generatorType: isEmployeeGenerated ? 'Employee' : 'Customer',
       source: req.body.source || (isEmployeeGenerated ? 'Employee App' : 'Customer App'),
-      createdById: req.body.createdById || (req.admin ? req.admin._id.toString() : null),
-      createdByEmpId: req.body.createdByEmpId || creatorEmpId,
+      createdById: req.body.createdById || creatorEmpId || (req.admin ? req.admin._id.toString() : null),
+      createdByEmpId: req.body.createdByEmpId || creatorEmpId || (emp ? emp.empId : null),
       createdByRole: req.body.createdByRole || creatorRole,
       createdByDesignation: req.body.createdByDesignation || creatorDesignation,
       createdByName: req.body.createdByName || creatorName,
@@ -193,8 +226,9 @@ const getLeads = async (req, res) => {
       const isHeadOrManager = ['hr head', 'zonal head', 'sales head', 'rrm', 'arm', 'rm', 'branch manager', 'team leader', 'credit manager', 'accountant', 'operation manager'].some(r => roleLower.includes(r) || zonalLower.includes(r));
       
       if (!isHeadOrManager) {
-        // Field Officer or Telecaller
+        // Field Officer (RO / RE) or Telecaller
         const adminIdStr = req.admin ? req.admin._id.toString() : '';
+        const adminEmpId = req.admin ? req.admin.empId : '';
         const adminNameStr = req.admin ? req.admin.name : '';
         const isTele = roleLower.includes('tele');
 
@@ -205,21 +239,55 @@ const getLeads = async (req, res) => {
             { telecallerId: adminIdStr },
             { telecallerName: adminNameStr },
             { assignedToId: adminIdStr },
+            ...(adminEmpId ? [{ assignedToId: adminEmpId }, { telecallerId: adminEmpId }] : []),
             { assignedTo: adminNameStr },
             { "followUps.0": { $exists: true } },
             { status: { $in: ['Under Review', 'Interested', 'Follow-up', 'Documents Pending', 'Contacted'] } }
           ];
         } else {
-          query.$or = [
+          // Field RO / RE: Strictly leads created by or assigned to this officer
+          const roCriteria = [
             { createdById: adminIdStr },
-            { createdByName: adminNameStr },
             { assignedToId: adminIdStr },
-            { assignedTo: adminNameStr },
-            { reRoId: adminIdStr },
-            { reRoName: adminNameStr }
+            { reRoId: adminIdStr }
           ];
+          if (adminEmpId) {
+            roCriteria.push({ createdById: adminEmpId });
+            roCriteria.push({ createdByEmpId: adminEmpId });
+            roCriteria.push({ assignedToId: adminEmpId });
+            roCriteria.push({ reRoId: adminEmpId });
+          }
+          if (adminNameStr) {
+            roCriteria.push({ createdByName: adminNameStr });
+            roCriteria.push({ assignedTo: adminNameStr });
+            roCriteria.push({ reRoName: adminNameStr });
+          }
+          query.$or = roCriteria;
         }
       }
+    }
+
+    // Strict Role Stage Gating & Desk Filtering
+    const desk = req.query.desk;
+    const isOpsUser = roleLower.includes('operation') || desk === 'operations';
+
+    if (isOpsUser) {
+      // Operations ONLY sees files that have been explicitly forwarded by Telecaller/RM
+      // They MUST NOT see 'RM_Telecaller_Review' or unforwarded initial leads
+      query.workflowStage = {
+        $in: [
+          'Operations_KYC_Verification',
+          'Sales_Head_Approval_Pending',
+          'Sales_Head_Approved',
+          'Ready_For_Bank_Dispatch',
+          'Bank_Dispatched',
+          'Bank_Sanctioned_Offer',
+          'Customer_Decision',
+          'Customer_Accepted',
+          'Customer_HOLD',
+          'Disbursed'
+        ]
+      };
     }
 
     if (status && status !== 'all') query.status = status;
@@ -283,10 +351,10 @@ const getPublicLeadByLeadId = async (req, res) => {
   }
 };
 
-// @desc    Update Lead Status
+// @desc    Update Lead Status & Pipeline Stages
 const updateLeadStatus = async (req, res) => {
   try {
-    const { status, reason, remarks, notes } = req.body;
+    const { status, reason, remarks, notes, inProcessStage, draftStatus } = req.body;
     const target = req.params.id;
     const isObjectId = mongoose.Types.ObjectId.isValid(target);
     let lead = isObjectId 
@@ -294,7 +362,39 @@ const updateLeadStatus = async (req, res) => {
       : await Lead.findOne({ leadId: target });
 
     if (lead) {
-      lead.status = status || lead.status;
+      if (status) lead.status = status;
+      if (inProcessStage) lead.inProcessStage = inProcessStage;
+      if (draftStatus) lead.draftStatus = draftStatus;
+
+      // Handle specific workflow transitions requested:
+      // 1. If marked as hold -> custom hold
+      if (status === 'HOLD' || draftStatus === 'Custom HOLD') {
+        lead.isDraft = true;
+        lead.draftStatus = 'Custom HOLD';
+        lead.status = 'HOLD';
+      }
+      // 2. If documents missing -> Doc's Pending
+      else if (status === 'Documents Pending' || draftStatus === "Doc's Pending") {
+        lead.isDraft = true;
+        lead.draftStatus = "Doc's Pending";
+        lead.status = 'Documents Pending';
+      }
+      // 3. In-Process stages: Lender Selection, Financial Decision, Lender Approved, Disbursal On Hold, Not Eligible
+      else if (['Lender Selection', 'Financial Decision', 'Lender Approved', 'Disbursal On Hold', 'Not Eligible', 'Disbursed'].includes(inProcessStage)) {
+        lead.isDraft = false;
+        lead.submissionType = 'SUBMITTED';
+        lead.inProcessStage = inProcessStage;
+        if (inProcessStage === 'Lender Approved') {
+          lead.status = 'Approved';
+        } else if (inProcessStage === 'Disbursed') {
+          lead.status = 'Converted';
+        } else if (inProcessStage === 'Not Eligible') {
+          lead.status = 'Rejected';
+        } else {
+          lead.status = 'Submitted';
+        }
+      }
+
       const callerName = req.admin?.name || req.admin?.email || 'Telecaller';
       const remarkText = reason || remarks || notes || '';
 
@@ -306,7 +406,7 @@ const updateLeadStatus = async (req, res) => {
         if (!lead.followUps) lead.followUps = [];
         lead.followUps.push({
           type: 'Call',
-          status: status || 'Contacted',
+          status: status || lead.status || 'Contacted',
           remarks: remarkText,
           notes: remarkText,
           addedBy: callerName,
@@ -315,7 +415,7 @@ const updateLeadStatus = async (req, res) => {
       }
 
       // If customer is verified / interested / converted / application submitted -> move to Customer_Confirmed
-      if (['Contacted', 'Interested', 'Converted', 'Application Ready', 'Application Submitted', 'Documents Received'].includes(status)) {
+      if (['Contacted', 'Interested', 'Converted', 'Application Ready', 'Application Submitted', 'Documents Received'].includes(lead.status)) {
         lead.workflowStage = 'Customer_Confirmed';
       }
 
@@ -401,6 +501,26 @@ const assignLead = async (req, res) => {
       }
 
       const updatedLead = await lead.save();
+
+      // Trigger Push Notification to assigned Employee
+      try {
+        const { notifyEmployeeOrZone } = require('../services/firebaseService');
+        await notifyEmployeeOrZone({
+          recipientId: lead.assignedToId,
+          empId: lead.assignedToId,
+          zone: lead.zone,
+          title: `📌 Lead Assigned: ${lead.name}`,
+          body: `Lead ${lead.leadId || lead.name} has been assigned to you by ${lead.assignedBy}. Priority: ${lead.priority || 'Normal'}.`,
+          data: {
+            type: 'lead_assigned',
+            leadId: lead.leadId || lead._id.toString(),
+            customerName: lead.name
+          }
+        }).catch(e => console.warn('Assign push error:', e.message));
+      } catch (err) {
+        console.warn('Assign notification dispatch error:', err.message);
+      }
+
       res.status(200).json(updatedLead);
     } else {
       res.status(404).json({ message: 'Lead not found' });
@@ -607,18 +727,118 @@ const telecallerConfirmLead = async (req, res) => {
   }
 };
 
-// @desc    RM hands over completed file to Operation Admin / Manager
+// @desc    Telecaller / RM hands over completed file to Operation Admin / Manager
 // @route   PUT /api/leads/:id/handover-operations
-// @access  Private (RM / ARM / Admin)
+// @access  Private (Telecaller / RM / ARM / Admin)
 const handoverToOperations = async (req, res) => {
   try {
     const lead = await Lead.findById(req.params.id);
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
 
     lead.workflowStage = 'Operations_KYC_Verification';
-    lead.status = 'In Progress';
+    lead.status = 'Submitted';
+    lead.submissionType = 'SUBMITTED';
+    lead.telecallerForwardedToOpsAt = new Date();
+    lead.operationsRejectionRemark = null; // Clear previous rejection if re-forwarding
     await lead.save();
-    res.status(200).json({ success: true, message: 'File handed over to Operation Manager for KYC verification.', lead });
+
+    // Trigger FCM & In-App Notification to Customer and Operation Team
+    try {
+      const { notifyCustomer, notifyEmployeeOrZone } = require('../services/firebaseService');
+      await notifyCustomer({
+        phone: lead.mobile,
+        email: lead.email,
+        title: 'Documents Verified by Telecaller',
+        body: `Your loan file (${lead.leadId || lead.name}) has been verified and submitted to Operations for KYC clearance.`,
+        data: {
+          type: 'document_verified',
+          leadId: lead.leadId || lead._id.toString(),
+          actionScreen: 'PendingLoanDetailsScreen'
+        }
+      }).catch(e => console.warn('Customer handover push error:', e.message));
+
+      await notifyEmployeeOrZone({
+        zone: lead.zone,
+        title: `📂 New File for KYC Verification [${lead.zone} Zone]`,
+        body: `Lead ${lead.name} (${lead.leadId || ''}) documents verified by Telecaller. Ready for KYC review.`,
+        data: {
+          type: 'kyc_verification',
+          leadId: lead.leadId || lead._id.toString(),
+          customerName: lead.name
+        }
+      }).catch(e => console.warn('Ops handover push error:', e.message));
+    } catch (err) {
+      console.warn('Handover notification dispatch error:', err.message);
+    }
+
+    res.status(200).json({ success: true, message: 'File forwarded to Operation Manager for KYC verification.', lead });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Operation Manager Rejects Documents & Returns File to Telecaller Queue
+// @route   PUT /api/leads/:id/operations-reject-doc
+// @access  Private (Operation Manager / Admin)
+const operationsRejectDocToTelecaller = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+
+    lead.workflowStage = 'RM_Telecaller_Review';
+    lead.status = 'Documents Pending';
+    lead.operationsRejectionRemark = reason || 'Incomplete or blurry documents. Please re-call customer and get valid documents.';
+    lead.operationsRejectedAt = new Date();
+    lead.operationsRejectedBy = req.admin ? req.admin.name : 'Operation Manager';
+
+    // Add note to followUps
+    if (!Array.isArray(lead.followUps)) lead.followUps = [];
+    lead.followUps.unshift({
+      date: new Date(),
+      status: 'Documents Pending',
+      notes: `[Operations Rejected]: ${lead.operationsRejectionRemark}`,
+      user: req.admin ? req.admin.name : 'Operation Manager'
+    });
+
+    await lead.save();
+
+    // Trigger Real-Time FCM Push & In-App Notification to Customer and Telecaller
+    const { notifyCustomer, notifyEmployeeOrZone } = require('../services/firebaseService');
+    
+    // 1. Notify Customer directly
+    await notifyCustomer({
+      phone: lead.mobile,
+      email: lead.email,
+      title: 'Action Required: Document Re-upload',
+      body: `Your documents require correction: ${lead.operationsRejectionRemark}. Please re-upload in the app.`,
+      data: {
+        type: 'document_rejected',
+        leadId: lead.leadId || lead._id.toString(),
+        actionScreen: 'CustomerLoanApplicationScreen',
+        reason: lead.operationsRejectionRemark
+      }
+    }).catch(e => console.warn('Customer push error:', e.message));
+
+    // 2. Notify Assigned Telecaller
+    if (lead.telecallerId || lead.assignedToId) {
+      await notifyEmployeeOrZone({
+        recipientId: lead.telecallerId || lead.assignedToId,
+        title: 'Lead Returned by Operations',
+        body: `Lead ${lead.name} (${lead.leadId}) returned: ${lead.operationsRejectionRemark}. Please call customer.`,
+        data: {
+          type: 'lead_returned',
+          leadId: lead.leadId || lead._id.toString(),
+          customerName: lead.name
+        }
+      }).catch(e => console.warn('Telecaller push error:', e.message));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'File returned to Telecaller queue for document re-upload & customer calling.',
+      lead
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -713,6 +933,40 @@ const submitBankSanctionOffer = async (req, res) => {
     lead.offerStatus = 'SANCTIONED';
 
     await lead.save();
+
+    // Trigger FCM & In-App Notification to Customer & Assigned Employee
+    try {
+      const { notifyCustomer, notifyEmployeeOrZone } = require('../services/firebaseService');
+      await notifyCustomer({
+        phone: lead.mobile,
+        email: lead.email,
+        title: '🎉 Loan Sanction Offer Received!',
+        body: `Congratulations! ${lead.lenderName} has sanctioned your loan offer of ₹${lead.offerAmount}. View details and accept in app.`,
+        data: {
+          type: 'offer',
+          leadId: lead.leadId || lead._id.toString(),
+          actionScreen: 'OfferDetailsScreen'
+        }
+      }).catch(e => console.warn('Customer offer push error:', e.message));
+
+      if (lead.assignedToId || lead.createdById || lead.rmId) {
+        await notifyEmployeeOrZone({
+          recipientId: lead.assignedToId || lead.createdById || lead.rmId,
+          empId: lead.assignedToId || lead.createdById,
+          zone: lead.zone,
+          title: `💰 Bank Offer Sanctioned: ${lead.name}`,
+          body: `Bank offer of ₹${lead.offerAmount} received from ${lead.lenderName} for ${lead.name} (${lead.leadId}).`,
+          data: {
+            type: 'offer',
+            leadId: lead.leadId || lead._id.toString(),
+            customerName: lead.name
+          }
+        }).catch(e => console.warn('Emp offer push error:', e.message));
+      }
+    } catch (err) {
+      console.warn('Offer notification dispatch error:', err.message);
+    }
+
     res.status(200).json({ success: true, message: 'Bank sanction offer submitted and published to customer.', lead });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -732,6 +986,9 @@ const customerHoldLead = async (req, res) => {
     lead.isHoldAlertActive = true;
     lead.holdReason = reason || 'Customer requested time to review / comparing interest rates';
     lead.holdAt = new Date();
+    lead.isDraft = true;
+    lead.draftStatus = 'Custom HOLD';
+    lead.status = 'HOLD';
 
     await lead.save();
     res.status(200).json({
@@ -758,6 +1015,38 @@ const customerAcceptLead = async (req, res) => {
     lead.holdResolvedAt = new Date();
 
     await lead.save();
+
+    // Notify Field RO, RM & Operations
+    try {
+      const { notifyEmployeeOrZone, notifyCustomer } = require('../services/firebaseService');
+      await notifyCustomer({
+        phone: lead.mobile,
+        email: lead.email,
+        title: 'Offer Accepted Successfully!',
+        body: `You have accepted the sanction offer for ${lead.lenderName || 'Loan'}. Agreement and e-NACH setup is in progress.`,
+        data: {
+          type: 'approval',
+          leadId: lead.leadId || lead._id.toString(),
+          actionScreen: 'NachKycScreen'
+        }
+      }).catch(e => console.warn('Customer accept push error:', e.message));
+
+      await notifyEmployeeOrZone({
+        recipientId: lead.reRoId || lead.rmId || lead.assignedToId,
+        empId: lead.assignedToId || lead.createdById,
+        zone: lead.zone,
+        title: `🤝 Customer Accepted Offer: ${lead.name}`,
+        body: `Customer ${lead.name} accepted the loan sanction offer. Proceed with NACH and agreement execution.`,
+        data: {
+          type: 'approval',
+          leadId: lead.leadId || lead._id.toString(),
+          customerName: lead.name
+        }
+      }).catch(e => console.warn('Emp accept push error:', e.message));
+    } catch (err) {
+      console.warn('Accept notification dispatch error:', err.message);
+    }
+
     res.status(200).json({ success: true, message: 'Offer accepted! Agreement signing and e-NACH initiated.', lead });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -777,6 +1066,38 @@ const disburseLoanAndHandoverCollection = async (req, res) => {
     lead.inProcessStage = 'Disbursed';
 
     await lead.save();
+
+    // Notify Customer and Team of Successful Disbursal
+    try {
+      const { notifyCustomer, notifyEmployeeOrZone } = require('../services/firebaseService');
+      await notifyCustomer({
+        phone: lead.mobile,
+        email: lead.email,
+        title: '💸 Loan Disbursed Successfully!',
+        body: `Congratulations! Your loan amount has been disbursed to your registered bank account. Thank you for choosing NUOG.`,
+        data: {
+          type: 'success',
+          leadId: lead.leadId || lead._id.toString(),
+          actionScreen: 'UpcomingEmiScreen'
+        }
+      }).catch(e => console.warn('Customer disburse push error:', e.message));
+
+      await notifyEmployeeOrZone({
+        recipientId: lead.reRoId || lead.rmId || lead.assignedToId,
+        empId: lead.assignedToId || lead.createdById,
+        zone: lead.zone,
+        title: `🎊 Loan Disbursed: ${lead.name}`,
+        body: `Lead ${lead.name} (${lead.leadId}) successfully disbursed and closed. Commission & milestone recorded.`,
+        data: {
+          type: 'success',
+          leadId: lead.leadId || lead._id.toString(),
+          customerName: lead.name
+        }
+      }).catch(e => console.warn('Emp disburse push error:', e.message));
+    } catch (err) {
+      console.warn('Disburse notification dispatch error:', err.message);
+    }
+
     res.status(200).json({ success: true, message: 'Loan successfully disbursed. Handed over to Collections team.', lead });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -810,12 +1131,18 @@ const uploadLeadDocument = async (req, res) => {
     };
 
     lead.documents.unshift(newDoc);
-    if (lead.status === 'New' || lead.status === 'Contacted') {
-      lead.status = 'Documents Pending';
+
+    // If documents are now uploaded, transition lead out of Doc's Pending
+    // Moves to 'SUBMITTED' / In-Process so it shows in Submitted History & In-Process stages
+    lead.isDraft = false;
+    lead.submissionType = 'SUBMITTED';
+    lead.status = 'Submitted';
+    if (!lead.inProcessStage || lead.inProcessStage === 'Doc\'s Pending' || lead.inProcessStage === 'Logins') {
+      lead.inProcessStage = 'Logins'; // Initial active submitted stage
     }
 
     await lead.save();
-    res.status(200).json({ success: true, message: 'Document uploaded successfully with Front & Back verification', document: newDoc, lead });
+    res.status(200).json({ success: true, message: 'Document uploaded successfully with Front & Back verification. Lead advanced to Submitted (In-Process)', document: newDoc, lead });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -874,6 +1201,7 @@ module.exports = {
   updateFollowUpStatus,
   telecallerConfirmLead,
   handoverToOperations,
+  operationsRejectDocToTelecaller,
   requestSalesHeadApproval,
   dispatchToBank,
   submitBankSanctionOffer,

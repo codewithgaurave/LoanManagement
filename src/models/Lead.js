@@ -267,6 +267,10 @@ const leadSchema = new mongoose.Schema({
   operationsVerifiedAt: { type: Date, default: null },
   operationsVerifiedBy: { type: String, default: null },
   operationsRemarks: { type: String, default: '' },
+  operationsRejectionRemark: { type: String, default: null },
+  operationsRejectedAt: { type: Date, default: null },
+  operationsRejectedBy: { type: String, default: null },
+  rejectedDocumentTypes: [{ type: String }],
 
   salesHeadApprovedAt: { type: Date, default: null },
   salesHeadApprovedBy: { type: String, default: null },
@@ -347,6 +351,7 @@ const leadSchema = new mongoose.Schema({
   followUps: [followUpSchema],
   nextFollowUp: { type: String, default: '-' },
   createdById: { type: String, default: null },
+  createdByEmpId: { type: String, default: null },
   createdByRole: { type: String, default: null },
   createdByName: { type: String, default: null },
 }, { timestamps: true });
