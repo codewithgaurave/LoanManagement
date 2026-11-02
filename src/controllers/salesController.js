@@ -979,11 +979,45 @@ async function getRMWorkflowMetrics(req, res) {
     const adminZone = req.admin?.zone;
     const roleLower = (req.admin?.role || '').toLowerCase();
     const isMasterAdmin = ['super admin', 'superadmin', 'admin', 'sales head', 'sales_head'].includes(roleLower);
+    const isRM = roleLower === 'rm' || (req.admin?.zonalRole || '').toLowerCase() === 'rm' || roleLower.includes('rm');
 
     let zoneFilter = {};
-    if (zone && zone !== 'ALL' && zone !== 'all') {
-      zoneFilter.$or = [{ zone: zone.toUpperCase() }, { zone: zone }];
-    } else if (!isMasterAdmin && adminZone && adminZone !== 'ALL' && adminZone !== 'all') {
+    if (isMasterAdmin) {
+      if (zone && zone !== 'ALL' && zone !== 'all') {
+        zoneFilter.$or = [{ zone: zone.toUpperCase() }, { zone: zone }];
+      }
+    } else if (isRM) {
+      // RM strictly scoped to their own team
+      const adminIdStr = req.admin ? req.admin._id.toString() : '';
+      const adminEmpId = req.admin ? req.admin.empId : '';
+      const adminNameStr = req.admin ? req.admin.name : '';
+
+      const Employee = require('../models/Employee');
+      const teamEmployees = await Employee.find({
+        $or: [
+          { rmId: req.admin?._id },
+          { reportsToManagerId: req.admin?._id },
+          ...(adminEmpId ? [{ rmId: adminEmpId }, { reportsToManagerId: adminEmpId }] : [])
+        ]
+      }).select('_id empId name');
+
+      const teamIds = [adminIdStr, ...teamEmployees.map(e => e._id.toString())];
+      const teamEmpIds = adminEmpId ? [adminEmpId, ...teamEmployees.map(e => e.empId).filter(Boolean)] : teamEmployees.map(e => e.empId).filter(Boolean);
+      const teamNames = adminNameStr ? [adminNameStr, ...teamEmployees.map(e => e.name).filter(Boolean)] : teamEmployees.map(e => e.name).filter(Boolean);
+
+      zoneFilter = {
+        $or: [
+          { rmId: { $in: teamIds } },
+          { rmName: { $in: teamNames } },
+          { createdById: { $in: [...teamIds, ...teamEmpIds] } },
+          { createdByEmpId: { $in: teamEmpIds } },
+          { createdByName: { $in: teamNames } },
+          { reRoId: { $in: [...teamIds, ...teamEmpIds] } },
+          { reRoName: { $in: teamNames } },
+          { assignedToId: { $in: [...teamIds, ...teamEmpIds] } }
+        ]
+      };
+    } else if (adminZone && adminZone !== 'ALL' && adminZone !== 'all') {
       zoneFilter.$or = [{ zone: adminZone.toUpperCase() }, { zone: adminZone }];
     }
 
@@ -1098,12 +1132,30 @@ async function getRMLeadsForReview(req, res) {
         { zone: armZone || adminZone }
       ];
     } else if (isRM) {
-      // RM — sees only their zone leads + leads assigned to them
-      const rmZone = (zone && zone !== 'ALL') ? zone.toUpperCase() : (adminZone && adminZone !== 'ALL' ? adminZone.toUpperCase() : null);
+      // RM strictly scoped to their own team leads (0 if fresh RM with no ROs)
+      const adminEmpId = req.admin?.empId || '';
+      const Employee = require('../models/Employee');
+      const teamEmployees = await Employee.find({
+        $or: [
+          { rmId: req.admin?._id },
+          { reportsToManagerId: req.admin?._id },
+          ...(adminEmpId ? [{ rmId: adminEmpId }, { reportsToManagerId: adminEmpId }] : [])
+        ]
+      }).select('_id empId name');
+
+      const teamIds = [adminId, ...teamEmployees.map(e => e._id.toString())];
+      const teamEmpIds = adminEmpId ? [adminEmpId, ...teamEmployees.map(e => e.empId).filter(Boolean)] : teamEmployees.map(e => e.empId).filter(Boolean);
+      const teamNames = adminName ? [adminName, ...teamEmployees.map(e => e.name).filter(Boolean)] : teamEmployees.map(e => e.name).filter(Boolean);
+
       filter.$or = [
-        { rmId: adminId },
-        { rmName: adminName },
-        ...(rmZone ? [{ zone: rmZone }] : [])
+        { rmId: { $in: teamIds } },
+        { rmName: { $in: teamNames } },
+        { createdById: { $in: [...teamIds, ...teamEmpIds] } },
+        { createdByEmpId: { $in: teamEmpIds } },
+        { createdByName: { $in: teamNames } },
+        { reRoId: { $in: [...teamIds, ...teamEmpIds] } },
+        { reRoName: { $in: teamNames } },
+        { assignedToId: { $in: [...teamIds, ...teamEmpIds] } }
       ];
     } else {
       // Other roles — zone-restricted
