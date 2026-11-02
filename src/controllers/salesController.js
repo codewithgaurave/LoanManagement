@@ -1022,8 +1022,7 @@ async function getRMWorkflowMetrics(req, res) {
       zoneFilter.$or = [{ zone: adminZone.toUpperCase() }, { zone: adminZone }];
     }
 
-    const pendingReview = await Lead.countDocuments({
-      ...zoneFilter,
+    const pendingReviewCriteria = {
       $or: [
         { workflowStage: 'Field_Lead_Created' },
         { workflowStage: 'RM_Telecaller_Review' },
@@ -1033,47 +1032,73 @@ async function getRMWorkflowMetrics(req, res) {
         { status: { $in: ['New', 'Unassigned', 'Pending', 'Application Pending', 'Draft', 'LEAD_SUBMITTED', 'Under Review'] } }
       ],
       workflowStage: { $nin: ['Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
-    });
+    };
 
-    const withTelecaller = await Lead.countDocuments({
-      ...zoneFilter,
+    const pendingReviewQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, pendingReviewCriteria] }
+      : { ...zoneFilter, ...pendingReviewCriteria };
+
+    const pendingReview = await Lead.countDocuments(pendingReviewQuery);
+
+    const withTelecallerCriteria = {
       $or: [
         { workflowStage: 'RM_Telecaller_Review' },
         { status: { $in: ['Contacted', 'Assigned', 'Under Review', 'Follow-up', 'In Progress', 'Calling'] } }
       ],
       workflowStage: { $nin: ['Customer_Confirmed', 'Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Customer_Accepted', 'Disbursed', 'Rejected'] }
-    });
+    };
 
-    const customerConfirmed = await Lead.countDocuments({
-      ...zoneFilter,
+    const withTelecallerQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, withTelecallerCriteria] }
+      : { ...zoneFilter, ...withTelecallerCriteria };
+
+    const withTelecaller = await Lead.countDocuments(withTelecallerQuery);
+
+    const customerConfirmedCriteria = {
       $or: [
         { workflowStage: 'Customer_Confirmed' },
         { status: { $in: ['Interested', 'Application Submitted', 'Converted', 'Documents Received', 'Qualified', 'Approved'] } }
       ],
       workflowStage: { $nin: ['Operations_KYC_Verification', 'Sales_Head_Approval_Pending', 'Sales_Head_Approved', 'Bank_Dispatched', 'Bank_Sanctioned_Offer', 'Disbursed', 'Rejected'] }
-    });
+    };
 
-    const holdCases = await Lead.countDocuments({ ...zoneFilter, isHoldAlertActive: true });
-    const disbursed = await Lead.countDocuments({ ...zoneFilter, workflowStage: 'Disbursed' });
-    const totalActive = await Lead.countDocuments({
-      ...zoneFilter,
-      workflowStage: { $nin: ['Rejected', 'Disbursed'] }
-    });
+    const customerConfirmedQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, customerConfirmedCriteria] }
+      : { ...zoneFilter, ...customerConfirmedCriteria };
+
+    const customerConfirmed = await Lead.countDocuments(customerConfirmedQuery);
+
+    const holdCasesQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, { isHoldAlertActive: true }] }
+      : { ...zoneFilter, isHoldAlertActive: true };
+
+    const holdCases = await Lead.countDocuments(holdCasesQuery);
+
+    const disbursedQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, { workflowStage: 'Disbursed' }] }
+      : { ...zoneFilter, workflowStage: 'Disbursed' };
+
+    const disbursed = await Lead.countDocuments(disbursedQuery);
+
+    const totalActiveQuery = zoneFilter.$or
+      ? { $and: [{ $or: zoneFilter.$or }, { workflowStage: { $nin: ['Rejected', 'Disbursed'] } }] }
+      : { ...zoneFilter, workflowStage: { $nin: ['Rejected', 'Disbursed'] } };
+
+    const totalActive = await Lead.countDocuments(totalActiveQuery);
 
     // Disbursed amount
-    const disbursedDocs = await Lead.find({ ...zoneFilter, workflowStage: 'Disbursed' }).select('expectedAmount loanAmount');
+    const disbursedDocs = await Lead.find(disbursedQuery).select('expectedAmount loanAmount');
     let disbursedAmount = 0;
     for (const doc of disbursedDocs) {
       const val = parseFloat(doc.loanAmount || doc.expectedAmount || 0);
       if (!isNaN(val)) disbursedAmount += val;
     }
 
-    // Field team count (RO/RE employees)
-    const empZoneQuery = zoneFilter.$or ? { $or: zoneFilter.$or } : {};
-    const fieldTeamCount = await Employee.countDocuments({
-      ...empZoneQuery,
-      status: 'Active'
-    });
+    // Field team count (RO/RE employees reporting to this RM / zone)
+    const empZoneQuery = isRM
+      ? { reportsToManagerId: req.admin?._id, status: 'Active' }
+      : (zoneFilter.$or ? { $or: zoneFilter.$or, status: 'Active' } : { status: 'Active' });
+    const fieldTeamCount = await Employee.countDocuments(empZoneQuery);
 
     res.status(200).json({
       success: true,

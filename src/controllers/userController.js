@@ -1843,14 +1843,47 @@ const getUserById = async (req, res) => {
                                 (emp.role || '').toLowerCase().includes('hr') || 
                                 (emp.designation || '').toLowerCase().includes('hr');
 
-      // Fetch Subordinate Ground Team (Staff under this Head)
-      const subordinateStaff = await Employee.find({
-        $or: [
-          { reportsToHeadId: emp._id },
-          { reportsToHeadName: emp.name },
-          { zone: zoneName, _id: { $ne: emp._id } }
-        ]
-      }).select('name empId role designation mobile phone status zone createdAt avatar').lean();
+      // Fetch Subordinate Ground Team (Staff reporting directly to this Manager / Head)
+      const isRoleRM = (emp.role || emp.zonalRole || emp.designation || '').toLowerCase().includes('rm');
+      const isRoleARM = (emp.role || emp.zonalRole || emp.designation || '').toLowerCase().includes('arm');
+      const isRoleRRM = (emp.role || emp.zonalRole || emp.designation || '').toLowerCase().includes('rrm');
+
+      let staffFilter = {};
+      if (isRoleRM) {
+        staffFilter = {
+          $or: [
+            { rmId: emp._id },
+            { reportsToManagerId: emp._id }
+          ]
+        };
+      } else if (isRoleARM) {
+        staffFilter = {
+          $or: [
+            { armId: emp._id },
+            { reportsToManagerId: emp._id }
+          ]
+        };
+      } else if (isRoleRRM) {
+        staffFilter = {
+          $or: [
+            { rrmId: emp._id },
+            { reportsToManagerId: emp._id }
+          ]
+        };
+      } else {
+        staffFilter = {
+          $or: [
+            { reportsToHeadId: emp._id },
+            { reportsToManagerId: emp._id },
+            { reportsToHeadName: emp.name },
+            { zone: zoneName, _id: { $ne: emp._id } }
+          ]
+        };
+      }
+
+      const subordinateStaff = await Employee.find(staffFilter)
+        .select('name empId role zonalRole designation mobile phone status zone createdAt avatar rmId reportsToManagerId')
+        .lean();
 
       // Fetch Ground Leads in Head's jurisdiction
       const groundLeads = await Lead.find({
@@ -1985,7 +2018,7 @@ const getUserById = async (req, res) => {
 // @access  Private (Admin)
 const updateUserStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, remarks = '', resignationDate = null, reason = '' } = req.body;
     const { id } = req.params;
     const Admin = require('../models/Admin');
     const Employee = require('../models/Employee');
@@ -2002,6 +2035,7 @@ const updateUserStatus = async (req, res) => {
 
     if (user) {
       user.status = status;
+      if (remarks) user.statusRemarks = remarks;
       const updatedUser = await user.save();
       return res.json({ success: true, message: `Customer status updated to ${status}`, user: updatedUser });
     }
@@ -2017,8 +2051,22 @@ const updateUserStatus = async (req, res) => {
 
     if (emp) {
       emp.status = status;
+      if (remarks || reason) {
+        emp.statusRemarks = remarks || reason;
+      }
+      if (resignationDate) {
+        emp.resignationDate = resignationDate;
+      }
+      if (status === 'Inactive' || status === 'Resigned') {
+        emp.deactivatedAt = new Date();
+        emp.deactivatedBy = req.admin?.name || 'Admin';
+      }
       await emp.save();
-      return res.json({ success: true, message: `Staff status updated to ${status}`, user: emp });
+      return res.json({ 
+        success: true, 
+        message: `Staff status updated to ${status}${remarks ? ` (${remarks})` : ''}`, 
+        user: emp 
+      });
     }
 
     // 3. Check Admin collection
@@ -2031,6 +2079,7 @@ const updateUserStatus = async (req, res) => {
 
     if (adminUser) {
       adminUser.status = status;
+      if (remarks) adminUser.statusRemarks = remarks;
       await adminUser.save();
       return res.json({ success: true, message: `Admin status updated to ${status}`, user: adminUser });
     }
