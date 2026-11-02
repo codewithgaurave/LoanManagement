@@ -1510,13 +1510,22 @@ const createAdminUser = async (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // Strict Validation: Juniors (RO, RE, Telecaller) MUST have a Reporting Manager / TL assigned before creation
+    // Strict Hierarchy Validation: Every role except Sales Head / Top Admin MUST have their senior manager assigned!
     const normalizedRole = (role || '').trim().toUpperCase();
-    const isJuniorRole = ['RO', 'RE', 'TELECALLER'].includes(normalizedRole);
-    if (isJuniorRole && !reportingManagerId) {
+    const rolesRequiringManager = ['RRM', 'ARM', 'RM', 'RO', 'RE', 'TELECALLER', 'HR MANAGER', 'HR EXECUTIVE'];
+    
+    if (rolesRequiringManager.includes(normalizedRole) && !reportingManagerId) {
+      let seniorTitle = 'Reporting Manager';
+      if (normalizedRole === 'RRM') seniorTitle = 'Sales Head';
+      else if (normalizedRole === 'ARM') seniorTitle = 'RRM (Regional Head)';
+      else if (normalizedRole === 'RM') seniorTitle = 'ARM (Area Manager)';
+      else if (['RO', 'RE'].includes(normalizedRole)) seniorTitle = 'RM (Reporting Manager)';
+      else if (normalizedRole === 'HR MANAGER') seniorTitle = 'HR Head';
+      else if (normalizedRole === 'HR EXECUTIVE') seniorTitle = 'HR Manager';
+
       return res.status(400).json({
         success: false,
-        message: `A Reporting Manager / TL is required to create a new ${normalizedRole}. Please select an active Manager/TL.`
+        message: `${seniorTitle} is required to create ${normalizedRole}. Please select an active ${seniorTitle} in this zone.`
       });
     }
 
@@ -1659,12 +1668,12 @@ const createAdminUser = async (req, res) => {
       zone: finalZone,
       permissions: Array.isArray(permissions) ? permissions : [],
       isDepartmentHead: isHead || isHRHead || role === 'Sales Head',
-      rrmId: req.body.rrmId || null,
-      rrmName: req.body.rrmName || null,
-      armId: req.body.armId || null,
-      armName: req.body.armName || null,
-      rmId: req.body.rmId || repManagerId || null,
-      rmName: req.body.rmName || repManagerName || null,
+      rrmId: req.body.rrmId || (normalizedRole === 'ARM' ? repManagerId : null),
+      rrmName: req.body.rrmName || (normalizedRole === 'ARM' ? repManagerName : null),
+      armId: req.body.armId || (normalizedRole === 'RM' ? repManagerId : null),
+      armName: req.body.armName || (normalizedRole === 'RM' ? repManagerName : null),
+      rmId: req.body.rmId || (['RO', 'RE'].includes(normalizedRole) ? repManagerId : (repManagerId || null)),
+      rmName: req.body.rmName || (['RO', 'RE'].includes(normalizedRole) ? repManagerName : (repManagerName || null)),
       reportsToHeadName: repHeadName,
       reportsToHeadId: repHeadId,
       reportsToManagerName: repManagerName,
