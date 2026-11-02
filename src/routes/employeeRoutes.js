@@ -7,7 +7,7 @@ const {
   updateDocumentStatus, getAttendanceByDate, getAllLeaves, addAttendanceRecord, 
   addLeaveRecord, updateLeaveStatus, remindHrForDocuments, loginEmployee, 
   remindEmployeeForOnboarding, changePassword, getMyAssignedLeads,
-  getMyCreatedLeads, getTelecallerDashboardStats, getPendingOnboardings,
+  getMyCreatedLeads, getTelecallerDashboardStats, getPendingOnboardings, bulkTransferTeam,
   assignOnboardingChaser, assignEmployeeToHR, getStaffForAssignment,
   guestLoginEmployee, getTeamEmployees, getDashboardOverview,
   getMyLeadsForApp, getMyLoansForApp, getCustomOffersForApp,
@@ -70,6 +70,7 @@ router.get('/my-created-leads', protectAdmin, getMyCreatedLeads);
 router.get('/telecaller-dashboard-stats', protectAdmin, getTelecallerDashboardStats);
 
 // Staff Assignment & Onboarding Tracking Routes
+router.put('/bulk-transfer-team', protectAdmin, checkPermission('Manage Employees'), bulkTransferTeam);
 router.get('/assignable-staff', protectAdmin, getStaffForAssignment);
 router.get('/pending-onboarding', protectAdmin, getPendingOnboardings);
 router.put('/:id/assign-onboarding-chaser', protectAdmin, assignOnboardingChaser);

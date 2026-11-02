@@ -754,7 +754,7 @@ const bulkAssignApplications = async (req, res) => {
 // @access  Private (Admin/HR)
 const updateApplicationStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, reportingManagerId, reportsToManagerName, rmId, rmName } = req.body;
     const application = await JobApplication.findById(req.params.id).populate('jobId');
     
     if (!application) return res.status(404).json({ message: 'Application not found' });
@@ -802,6 +802,11 @@ const updateApplicationStatus = async (req, res) => {
           designation: application.jobId?.title || 'Team Member',
           role: 'Employee',
           division: application.jobId?.department || 'Operations',
+          zonalRole: application.jobId?.title?.toUpperCase().includes('EXECUTIVE') ? 'RE' : (application.jobId?.title?.toUpperCase().includes('OFFICER') ? 'RO' : 'Other'),
+          reportsToManagerId: reportingManagerId || rmId || null,
+          reportsToManagerName: reportsToManagerName || rmName || null,
+          rmId: rmId || reportingManagerId || null,
+          rmName: rmName || reportsToManagerName || null,
           grossMonthly: application.monthlyNetSalary ? Number(application.monthlyNetSalary) : (application.expectedSalary ? Number(application.expectedSalary) : undefined),
           qual1Type: application.education?.[0]?.degree || 'Graduation',
           qual1Inst: application.education?.[0]?.institution || '',

@@ -134,6 +134,16 @@ const leadSchema = new mongoose.Schema({
     enum: ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'ALL'],
     default: 'NORTH'
   },
+  sourcingZone: {
+    type: String,
+    enum: ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'ALL', ''],
+    default: ''
+  },
+  customerZone: {
+    type: String,
+    enum: ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL', 'ALL', ''],
+    default: ''
+  },
   branch: { type: String, default: '' },
   reportingManagerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -314,6 +324,11 @@ const leadSchema = new mongoose.Schema({
   holdFollowUpRemarks: { type: String, default: '' },
   holdResolvedAt: { type: Date, default: null },
 
+  generatorType: {
+    type: String,
+    enum: ['Employee', 'Customer', 'Admin', 'Other'],
+    default: 'Employee'
+  },
   source: {
     type: String,
     enum: ['Website', 'Referral', 'Walk-in', 'Tele Calling', 'Social Media', 'Employee App', 'Customer App', 'Other'],
@@ -391,16 +406,24 @@ leadSchema.pre('save', function () {
     }
   }
 
-  // Auto assign Zone if state is available
+  // Geographic tracking for Customer State & Zone
   if (this.state) {
     try {
       const { getZoneFromState } = require('../utils/zoneHelper');
-      const calculatedZone = getZoneFromState(this.state);
-      if (calculatedZone) {
-        this.zone = calculatedZone;
+      const calculatedCustomerZone = getZoneFromState(this.state);
+      if (calculatedCustomerZone) {
+        this.customerZone = calculatedCustomerZone;
+      }
+      
+      // IMPORTANT: Lead zone belongs to the SOURCING EMPLOYEE/TEAM!
+      // Only fallback to customer location zone if zone was NOT explicitly assigned by the creator employee
+      if (!this.zone || this.generatorType === 'Customer') {
+        if (calculatedCustomerZone) {
+          this.zone = calculatedCustomerZone;
+        }
       }
     } catch (zErr) {
-      console.warn('Could not auto-map lead zone:', zErr.message);
+      console.warn('Could not auto-map lead customer zone:', zErr.message);
     }
   }
 

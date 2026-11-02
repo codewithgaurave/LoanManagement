@@ -5239,8 +5239,84 @@ Object.assign(module.exports, {
   getHelpSupportData,
   updateEmployeeShiftStatus,
   getEmployeeDocumentsForApp,
-  getMyAttendanceForApp
+  getMyAttendanceForApp,
+  bulkTransferTeam
 });
+
+// @desc    Bulk Transfer Team Members (RO/RE/Staff) to a Target Manager (e.g. New RM or on Resignation)
+// @route   PUT /api/employees/bulk-transfer-team
+// @access  Private (Admin / HR)
+const bulkTransferTeam = async (req, res) => {
+  try {
+    const { employeeIds, targetManagerId, transferActiveLeads = true } = req.body;
+
+    if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please select at least one employee to transfer.' });
+    }
+
+    if (!targetManagerId) {
+      return res.status(400).json({ success: false, message: 'Target Manager is required.' });
+    }
+
+    const targetManager = await Employee.findById(targetManagerId);
+    if (!targetManager) {
+      return res.status(404).json({ success: false, message: 'Target Manager not found.' });
+    }
+
+    const managerRole = (targetManager.zonalRole || targetManager.role || '').toUpperCase();
+    const isTargetRM = managerRole.includes('RM') || managerRole.includes('RELATIONSHIP MANAGER');
+
+    // Update reporting details for all selected employees
+    const updateFields = {
+      reportsToManagerId: targetManager._id,
+      reportsToManagerName: targetManager.name,
+      updatedAt: new Date()
+    };
+
+    if (isTargetRM) {
+      updateFields.rmId = targetManager._id;
+      updateFields.rmName = targetManager.name;
+    }
+
+    const result = await Employee.updateMany(
+      { _id: { $in: employeeIds } },
+      { $set: updateFields }
+    );
+
+    // Optionally reassign active/in-progress leads created by these field staff to the new RM
+    let leadsTransferredCount = 0;
+    if (transferActiveLeads && isTargetRM) {
+      const Lead = require('../models/Lead');
+      const leadUpdate = await Lead.updateMany(
+        {
+          $or: [
+            { createdById: { $in: employeeIds.map(id => id.toString()) } },
+            { reRoId: { $in: employeeIds.map(id => id.toString()) } }
+          ],
+          workflowStage: { $nin: ['Disbursed', 'Rejected', 'Customer_Rejected', 'Drop_Out'] }
+        },
+        {
+          $set: {
+            rmId: targetManager._id.toString(),
+            rmName: targetManager.name
+          }
+        }
+      );
+      leadsTransferredCount = leadUpdate.modifiedCount;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully transferred ${result.modifiedCount} employee(s) to ${targetManager.name} (${targetManager.designation || targetManager.role}).`,
+      transferredEmployees: result.modifiedCount,
+      leadsTransferredCount
+    });
+  } catch (error) {
+    console.error('bulkTransferTeam error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 
 
 

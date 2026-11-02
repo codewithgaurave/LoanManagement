@@ -1510,6 +1510,16 @@ const createAdminUser = async (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
+    // Strict Validation: Juniors (RO, RE, Telecaller) MUST have a Reporting Manager / TL assigned before creation
+    const normalizedRole = (role || '').trim().toUpperCase();
+    const isJuniorRole = ['RO', 'RE', 'TELECALLER'].includes(normalizedRole);
+    if (isJuniorRole && !reportingManagerId) {
+      return res.status(400).json({
+        success: false,
+        message: `A Reporting Manager / TL is required to create a new ${normalizedRole}. Please select an active Manager/TL.`
+      });
+    }
+
     // Check if email already exists in Admin or Employee collection
     const [existingAdmin, existingEmp] = await Promise.all([
       Admin.findOne({ email: cleanEmail }),
@@ -1653,8 +1663,8 @@ const createAdminUser = async (req, res) => {
       rrmName: req.body.rrmName || null,
       armId: req.body.armId || null,
       armName: req.body.armName || null,
-      rmId: req.body.rmId || null,
-      rmName: req.body.rmName || null,
+      rmId: req.body.rmId || repManagerId || null,
+      rmName: req.body.rmName || repManagerName || null,
       reportsToHeadName: repHeadName,
       reportsToHeadId: repHeadId,
       reportsToManagerName: repManagerName,

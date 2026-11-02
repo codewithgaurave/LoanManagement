@@ -10,11 +10,59 @@ const { getAutoAssignedRMAndTelecaller } = require('../utils/leadAssignmentHelpe
 // @access  Private
 const createLead = async (req, res) => {
   try {
-    const emp = req.admin ? await Employee.findById(req.admin._id) : null;
-    const resolvedEmpId = emp?.empId || req.admin?.empId || req.body.createdByEmpId || req.body.createdById;
-    const targetZone = (req.body.zone || emp?.zone || req.admin?.zone || 'NORTH').toUpperCase();
+    let emp = req.admin ? await Employee.findById(req.admin._id) : null;
+    if (!emp && (req.body.createdByEmpId || req.body.createdById)) {
+      const empIdentifier = req.body.createdByEmpId || req.body.createdById;
+      emp = await Employee.findOne({
+        $or: [
+          ...(mongoose.isValidObjectId(empIdentifier) ? [{ _id: empIdentifier }] : []),
+          { empId: empIdentifier }
+        ]
+      });
+    }
 
-    // 1. Auto-assign Zone RM & Alternate Telecaller (Round-Robin Pan-India)
+    const resolvedEmpId = emp?.empId || req.admin?.empId || req.body.createdByEmpId || req.body.createdById;
+    
+    // Priority: Employee's team assigned zone > req.admin.zone > req.body.zone > NORTH
+    const rawTeamZone = (emp?.zone || req.admin?.zone || req.body.zone || req.body.sourcingZone || 'NORTH').toUpperCase();
+    const validZones = ['NORTH', 'SOUTH', 'EAST', 'WEST', 'CENTRAL'];
+    const targetZone = validZones.includes(rawTeamZone) ? rawTeamZone : 'NORTH';
+
+    // Calculate customer geographic zone for address / branch reference
+    let customerGeographicZone = req.body.customerZone || '';
+    if (!customerGeographicZone && req.body.state) {
+      try {
+        const { getZoneFromState } = require('../utils/zoneHelper');
+        customerGeographicZone = getZoneFromState(req.body.state);
+      } catch (_) {}
+    }
+
+    // Cross-Zone Lead Restriction for field officers (RO / RE / Employees)
+    const isMasterAdmin = ['super admin', 'superadmin', 'admin', 'sales head', 'sales_head', 'operations head', 'operation admin'].includes((req.admin?.role || '').toLowerCase());
+    if (!isMasterAdmin && targetZone !== 'ALL') {
+      const customerPincode = (req.body.pincode || req.body.raPincode || req.body.baPincode || '').toString().trim();
+      const customerState = req.body.state || req.body.raState || req.body.baState || '';
+      
+      let detectedCustomerZone = customerGeographicZone;
+      if (!detectedCustomerZone && customerPincode && customerPincode.length >= 2) {
+        const prefix2 = parseInt(customerPincode.slice(0, 2), 10);
+        if (prefix2 === 11) detectedCustomerZone = 'CENTRAL';
+        else if (prefix2 >= 12 && prefix2 <= 28) detectedCustomerZone = 'NORTH';
+        else if (prefix2 >= 30 && prefix2 <= 48) detectedCustomerZone = 'WEST';
+        else if (prefix2 === 49 || (prefix2 >= 70 && prefix2 <= 85)) detectedCustomerZone = 'EAST';
+        else if (prefix2 >= 50 && prefix2 <= 69) detectedCustomerZone = 'SOUTH';
+      }
+
+      if (detectedCustomerZone && detectedCustomerZone !== targetZone) {
+        return res.status(403).json({
+          success: false,
+          territoryViolation: true,
+          message: `Territory Restriction Notice: Access Denied. You are registered as an authorized field representative for ${targetZone} ZONE. Generating leads for ${detectedCustomerZone} ZONE (PIN: ${customerPincode || 'N/A'}, ${customerState || detectedCustomerZone}) is strictly prohibited under company territory policy.`
+        });
+      }
+    }
+
+    // 1. Auto-assign Zone RM of the SOURCING TEAM's Zone & Alternate Telecaller (Round-Robin Pan-India)
     const { rm: autoRM, telecaller: autoTelecaller } = await getAutoAssignedRMAndTelecaller(targetZone);
 
     const isEmployeeGenerated = Boolean(req.admin || req.body.createdById || req.body.createdByEmpId);
@@ -128,6 +176,8 @@ const createLead = async (req, res) => {
       // Directly sent to both Telecaller & RM (No manual approval needed to start calling)
       workflowStage: req.body.workflowStage || 'RM_Telecaller_Review',
       zone: targetZone,
+      sourcingZone: targetZone,
+      customerZone: customerGeographicZone || '',
       rrmId: req.body.rrmId || emp?.rrmId || null,
       rrmName: req.body.rrmName || emp?.rrmName || null,
       armId: req.body.armId || emp?.armId || null,
@@ -222,10 +272,42 @@ const getLeads = async (req, res) => {
         query.assignedToId = assignedToId;
       }
     } else {
-      // Check if user is a Zonal Head / RRM / ARM / RM / TL / Credit / Accounts
-      const isHeadOrManager = ['hr head', 'zonal head', 'sales head', 'rrm', 'arm', 'rm', 'branch manager', 'team leader', 'credit manager', 'accountant', 'operation manager'].some(r => roleLower.includes(r) || zonalLower.includes(r));
-      
-      if (!isHeadOrManager) {
+      // Differentiate Zonal Head / RRM / ARM from local RM
+      const isZonalHeadOrRRM = ['zonal head', 'sales head', 'rrm', 'arm'].some(r => roleLower.includes(r) || zonalLower.includes(r));
+      const isRM = ['rm', 'relationship manager'].some(r => roleLower === r || zonalLower === r || roleLower.includes('rm'));
+      const isOtherManager = ['hr head', 'branch manager', 'team leader', 'credit manager', 'accountant', 'operation manager'].some(r => roleLower.includes(r) || zonalLower.includes(r));
+
+      if (isRM) {
+        // RM strictly sees leads from their own assigned team (created by or assigned to themselves OR their direct reporting RO/REs)
+        const adminIdStr = req.admin ? req.admin._id.toString() : '';
+        const adminEmpId = req.admin ? req.admin.empId : '';
+        const adminNameStr = req.admin ? req.admin.name : '';
+
+        // Find all junior RO/RE employees reporting directly to this RM
+        const Employee = require('../models/Employee');
+        const teamEmployees = await Employee.find({
+          $or: [
+            { rmId: req.admin?._id },
+            { reportsToManagerId: req.admin?._id },
+            ...(adminEmpId ? [{ rmId: adminEmpId }, { reportsToManagerId: adminEmpId }] : [])
+          ]
+        }).select('_id empId name');
+
+        const teamIds = [adminIdStr, ...teamEmployees.map(e => e._id.toString())];
+        const teamEmpIds = adminEmpId ? [adminEmpId, ...teamEmployees.map(e => e.empId).filter(Boolean)] : teamEmployees.map(e => e.empId).filter(Boolean);
+        const teamNames = adminNameStr ? [adminNameStr, ...teamEmployees.map(e => e.name).filter(Boolean)] : teamEmployees.map(e => e.name).filter(Boolean);
+
+        query.$or = [
+          { rmId: { $in: teamIds } },
+          { rmName: { $in: teamNames } },
+          { createdById: { $in: [...teamIds, ...teamEmpIds] } },
+          { createdByEmpId: { $in: teamEmpIds } },
+          { createdByName: { $in: teamNames } },
+          { reRoId: { $in: [...teamIds, ...teamEmpIds] } },
+          { reRoName: { $in: teamNames } },
+          { assignedToId: { $in: [...teamIds, ...teamEmpIds] } }
+        ];
+      } else if (!isZonalHeadOrRRM && !isOtherManager) {
         // Field Officer (RO / RE) or Telecaller
         const adminIdStr = req.admin ? req.admin._id.toString() : '';
         const adminEmpId = req.admin ? req.admin.empId : '';
