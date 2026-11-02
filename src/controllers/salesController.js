@@ -993,26 +993,27 @@ async function getRMWorkflowMetrics(req, res) {
       const adminNameStr = req.admin ? req.admin.name : '';
 
       const Employee = require('../models/Employee');
-      const teamEmployees = await Employee.find({
+      const teamEmployees = req.admin?._id ? await Employee.find({
         $or: [
-          { rmId: req.admin?._id },
-          { reportsToManagerId: req.admin?._id },
-          ...(adminEmpId ? [{ rmId: adminEmpId }, { reportsToManagerId: adminEmpId }] : [])
+          { rmId: req.admin._id },
+          { reportsToManagerId: req.admin._id }
         ]
-      }).select('_id empId name');
+      }).select('_id empId name') : [];
 
+      // Distinguish ObjectIds (for rmId, reRoId schema types) from Strings (createdById, createdByEmpId, etc.)
+      const validTeamObjectIds = [req.admin?._id, ...teamEmployees.map(e => e._id)].filter(id => id && mongoose.Types.ObjectId.isValid(id));
       const teamIds = [adminIdStr, ...teamEmployees.map(e => e._id.toString())];
       const teamEmpIds = adminEmpId ? [adminEmpId, ...teamEmployees.map(e => e.empId).filter(Boolean)] : teamEmployees.map(e => e.empId).filter(Boolean);
       const teamNames = adminNameStr ? [adminNameStr, ...teamEmployees.map(e => e.name).filter(Boolean)] : teamEmployees.map(e => e.name).filter(Boolean);
 
       zoneFilter = {
         $or: [
-          { rmId: { $in: teamIds } },
+          { rmId: { $in: validTeamObjectIds } },
           { rmName: { $in: teamNames } },
           { createdById: { $in: [...teamIds, ...teamEmpIds] } },
           { createdByEmpId: { $in: teamEmpIds } },
           { createdByName: { $in: teamNames } },
-          { reRoId: { $in: [...teamIds, ...teamEmpIds] } },
+          { reRoId: { $in: validTeamObjectIds } },
           { reRoName: { $in: teamNames } },
           { assignedToId: { $in: [...teamIds, ...teamEmpIds] } }
         ]
@@ -1135,25 +1136,26 @@ async function getRMLeadsForReview(req, res) {
       // RM strictly scoped to their own team leads (0 if fresh RM with no ROs)
       const adminEmpId = req.admin?.empId || '';
       const Employee = require('../models/Employee');
-      const teamEmployees = await Employee.find({
+      const teamEmployees = req.admin?._id ? await Employee.find({
         $or: [
-          { rmId: req.admin?._id },
-          { reportsToManagerId: req.admin?._id },
-          ...(adminEmpId ? [{ rmId: adminEmpId }, { reportsToManagerId: adminEmpId }] : [])
+          { rmId: req.admin._id },
+          { reportsToManagerId: req.admin._id }
         ]
-      }).select('_id empId name');
+      }).select('_id empId name') : [];
 
+      // Distinguish ObjectIds (for rmId, reRoId schema types) from Strings (createdById, createdByEmpId, etc.)
+      const validTeamObjectIds = [req.admin?._id, ...teamEmployees.map(e => e._id)].filter(id => id && mongoose.Types.ObjectId.isValid(id));
       const teamIds = [adminId, ...teamEmployees.map(e => e._id.toString())];
       const teamEmpIds = adminEmpId ? [adminEmpId, ...teamEmployees.map(e => e.empId).filter(Boolean)] : teamEmployees.map(e => e.empId).filter(Boolean);
       const teamNames = adminName ? [adminName, ...teamEmployees.map(e => e.name).filter(Boolean)] : teamEmployees.map(e => e.name).filter(Boolean);
 
       filter.$or = [
-        { rmId: { $in: teamIds } },
+        { rmId: { $in: validTeamObjectIds } },
         { rmName: { $in: teamNames } },
         { createdById: { $in: [...teamIds, ...teamEmpIds] } },
         { createdByEmpId: { $in: teamEmpIds } },
         { createdByName: { $in: teamNames } },
-        { reRoId: { $in: [...teamIds, ...teamEmpIds] } },
+        { reRoId: { $in: validTeamObjectIds } },
         { reRoName: { $in: teamNames } },
         { assignedToId: { $in: [...teamIds, ...teamEmpIds] } }
       ];
