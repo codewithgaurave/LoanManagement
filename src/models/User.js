@@ -48,6 +48,9 @@ const userSchema = new mongoose.Schema({
   address: { type: String },
   currentAddress: { type: String },
   permanentAddress: { type: String },
+  latitude: { type: Number, default: null },
+  longitude: { type: Number, default: null },
+  geoAddress: { type: String, default: '' },
 
   occupation: { type: String },
   annualIncome: { type: String },

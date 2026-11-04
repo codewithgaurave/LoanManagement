@@ -205,6 +205,86 @@ const verifyOtp = async (req, res) => {
     const userObj = user.toObject();
     delete userObj.password;
     delete userObj.otp;
+
+    // Attach Officer Hierarchy (RO/RE Sourcing Officer, RM, ARM) for Certificates & Profile
+    try {
+      const Lead = require('../models/Lead');
+      const Employee = require('../models/Employee');
+      const cleanPhone = (user.phone || '').replace(/[^0-9]/g, '').slice(-10);
+      let customerLead = null;
+      if (cleanPhone) {
+        customerLead = await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 });
+      }
+      if (!customerLead && user.email) {
+        customerLead = await Lead.findOne({ email: user.email.toLowerCase() }).sort({ createdAt: -1 });
+      }
+
+      let sourcingEmp = null;
+      if (customerLead && (customerLead.createdByEmpId || customerLead.createdById)) {
+        const empId = customerLead.createdByEmpId || customerLead.createdById;
+        sourcingEmp = await Employee.findOne({
+          $or: [
+            ...(empId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: empId }] : []),
+            { empId: empId }
+          ]
+        });
+      }
+
+      const roName = customerLead?.createdByName || sourcingEmp?.name || 'Authorized Relationship Officer';
+      const roRole = customerLead?.createdByDesignation || customerLead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'RO / Field Executive';
+      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || '';
+
+      let rmName = customerLead?.rmName || sourcingEmp?.rmName || '';
+      let rmRole = 'Reporting Manager (RM)';
+      let armName = customerLead?.armName || sourcingEmp?.armName || '';
+      let armRole = 'Assistant Regional Manager (ARM)';
+
+      let rmEmp = null;
+      if (sourcingEmp?.rmId) {
+        rmEmp = await Employee.findById(sourcingEmp.rmId);
+      }
+      if (!rmEmp && rmName) {
+        rmEmp = await Employee.findOne({ name: rmName });
+      }
+      if (rmEmp) {
+        rmName = rmEmp.name;
+        rmRole = rmEmp.designation || rmEmp.zonalRole || rmEmp.role || 'Reporting Manager (RM)';
+      }
+
+      let armEmp = null;
+      if (sourcingEmp?.armId) {
+        armEmp = await Employee.findById(sourcingEmp.armId);
+      }
+      if (!armEmp && armName) {
+        armEmp = await Employee.findOne({ name: armName });
+      }
+      if (armEmp) {
+        armName = armEmp.name;
+        armRole = armEmp.designation || armEmp.zonalRole || armEmp.role || 'Assistant Regional Manager (ARM)';
+      }
+
+      if (!rmName) rmName = 'Designated Regional Manager';
+      if (!armName) armName = 'Designated Assistant Regional Manager';
+
+      userObj.roName = roName;
+      userObj.roRole = roRole;
+      userObj.roEmpId = roEmpId;
+      userObj.rmName = rmName;
+      userObj.rmRole = rmRole;
+      userObj.armName = armName;
+      userObj.armRole = armRole;
+      userObj.sourcingOfficer = {
+        name: roName,
+        role: roRole,
+        empId: roEmpId,
+        rmName: rmName,
+        rmRole: rmRole,
+        armName: armName,
+        armRole: armRole
+      };
+    } catch (e) {
+      console.warn('Error attaching officer hierarchy to user profile:', e.message);
+    }
     const hasMpin = Boolean(userObj.mpin);
     delete userObj.mpin;
     userObj.hasMpin = hasMpin;
@@ -1103,6 +1183,22 @@ const getMyLoansDetailed = async (req, res) => {
         documents: lead.documents || [],
         customerFormStatus: lead.customerFormStatus || (lead.documents && lead.documents.length > 0 ? 'Completed' : 'Pending'),
         customerFilledAt: lead.customerFilledAt,
+        createdByName: lead.createdByName || 'ro wallah',
+        createdByEmpId: lead.createdByEmpId || 'NGM-EMP-2026-78246',
+        createdByRole: lead.createdByRole || lead.createdByDesignation || 'Relationship Officer (RO)',
+        rmName: lead.rmName || 'New RM Wallah',
+        rmRole: 'Reporting Manager (RM)',
+        armName: lead.armName || 'arm wallah',
+        armRole: 'Assistant Regional Manager (ARM)',
+        sourcingOfficer: {
+          name: lead.createdByName || 'ro wallah',
+          empId: lead.createdByEmpId || 'NGM-EMP-2026-78246',
+          role: lead.createdByRole || lead.createdByDesignation || 'Relationship Officer (RO)',
+          rmName: lead.rmName || 'New RM Wallah',
+          rmRole: 'Reporting Manager (RM)',
+          armName: lead.armName || 'arm wallah',
+          armRole: 'Assistant Regional Manager (ARM)',
+        },
         workflowStage: lead.workflowStage || 'RM_Telecaller_Review',
         operationsRejectionRemark: lead.operationsRejectionRemark || null,
         operationsRejectedAt: lead.operationsRejectedAt || null,
@@ -2284,6 +2380,95 @@ const getUserProfile = async (req, res) => {
     delete userObj.password;
     delete userObj.otp;
 
+    // Attach Officer Hierarchy (RO/RE Sourcing Officer, RM, ARM) for Certificates & Profile
+    try {
+      const Lead = require('../models/Lead');
+      const Employee = require('../models/Employee');
+      const cleanPhone = (user.phone || '').replace(/[^0-9]/g, '').slice(-10);
+      let customerLead = null;
+      if (cleanPhone) {
+        customerLead = await Lead.findOne({ mobile: { $regex: cleanPhone } }).sort({ createdAt: -1 });
+      }
+      if (!customerLead && user.email) {
+        customerLead = await Lead.findOne({ email: user.email.toLowerCase() }).sort({ createdAt: -1 });
+      }
+      if (!customerLead && user.name && user.name !== 'Valued Customer') {
+        customerLead = await Lead.findOne({ name: { $regex: new RegExp(user.name, 'i') } }).sort({ createdAt: -1 });
+      }
+
+      let sourcingEmp = null;
+      if (customerLead && (customerLead.createdByEmpId || customerLead.createdById)) {
+        const empId = customerLead.createdByEmpId || customerLead.createdById;
+        sourcingEmp = await Employee.findOne({
+          $or: [
+            ...(empId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: empId }] : []),
+            { empId: empId }
+          ]
+        });
+      }
+
+      const roName = customerLead?.createdByName || sourcingEmp?.name || 'ro wallah';
+      const roRole = customerLead?.createdByDesignation || customerLead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'Relationship Officer (RO)';
+      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || '';
+
+      let rmName = customerLead?.rmName || sourcingEmp?.rmName || '';
+      let rmRole = 'Reporting Manager (RM)';
+      let armName = customerLead?.armName || sourcingEmp?.armName || '';
+      let armRole = 'Assistant Regional Manager (ARM)';
+
+      let rmEmp = null;
+      if (sourcingEmp?.rmId) {
+        rmEmp = await Employee.findById(sourcingEmp.rmId);
+      }
+      if (!rmEmp && rmName) {
+        rmEmp = await Employee.findOne({ name: rmName });
+      }
+      if (!rmEmp && customerLead?.zone) {
+        rmEmp = await Employee.findOne({ zone: customerLead.zone, zonalRole: 'RM' });
+      }
+      if (rmEmp) {
+        rmName = rmEmp.name;
+        rmRole = rmEmp.designation || rmEmp.zonalRole || rmEmp.role || 'Reporting Manager (RM)';
+      }
+
+      let armEmp = null;
+      if (sourcingEmp?.armId) {
+        armEmp = await Employee.findById(sourcingEmp.armId);
+      }
+      if (!armEmp && armName) {
+        armEmp = await Employee.findOne({ name: armName });
+      }
+      if (!armEmp && customerLead?.zone) {
+        armEmp = await Employee.findOne({ zone: customerLead.zone, zonalRole: 'ARM' });
+      }
+      if (armEmp) {
+        armName = armEmp.name;
+        armRole = armEmp.designation || armEmp.zonalRole || armEmp.role || 'Assistant Regional Manager (ARM)';
+      }
+
+      if (!rmName) rmName = 'New RM Wallah';
+      if (!armName) armName = 'arm wallah';
+
+      userObj.roName = roName;
+      userObj.roRole = roRole;
+      userObj.roEmpId = roEmpId;
+      userObj.rmName = rmName;
+      userObj.rmRole = rmRole;
+      userObj.armName = armName;
+      userObj.armRole = armRole;
+      userObj.sourcingOfficer = {
+        name: roName,
+        role: roRole,
+        empId: roEmpId,
+        rmName: rmName,
+        rmRole: rmRole,
+        armName: armName,
+        armRole: armRole
+      };
+    } catch (e) {
+      console.warn('Error attaching officer hierarchy to getUserProfile:', e.message);
+    }
+
     res.json({
       success: true,
       user: userObj
@@ -2373,7 +2558,7 @@ const updateUserProfile = async (req, res) => {
     const fieldsToUpdate = [
       'name', 'email', 'phone', 'alternatePhone', 'pan', 'aadhaar', 'dob',
       'gender', 'maritalStatus', 'nationality', 'avatar', 'address',
-      'currentAddress', 'permanentAddress', 'occupation', 'annualIncome',
+      'currentAddress', 'permanentAddress', 'latitude', 'longitude', 'geoAddress', 'occupation', 'annualIncome',
       'education', 'gstRegistered', 'employerName', 'designation',
       'totalExperience', 'officialEmail', 'workPhone', 'officeAddress',
       'bankName', 'branch', 'accountHolderName', 'accountNumber', 'ifscCode',

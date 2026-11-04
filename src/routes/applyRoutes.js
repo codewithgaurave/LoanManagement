@@ -2,6 +2,7 @@ const express = require('express');
 const upload = require('../middlewares/uploadMiddleware');
 const router = express.Router();
 const Lead = require('../models/Lead');
+const Employee = require('../models/Employee');
 const Notification = require('../models/Notification');
 
 // Handle Public Customer Form Submission (Online Link Upload)
@@ -137,6 +138,100 @@ router.post('/submit/:leadId', async (req, res) => {
   } catch (error) {
     console.error('Error submitting customer form:', error);
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Public API for fetching assigned Employee, RM, and ARM for a lead
+router.get('/lead-officers/:leadId', async (req, res) => {
+  try {
+    const rawLeadId = req.params.leadId || '';
+    let lead = await Lead.findOne({
+      $or: [
+        { leadId: { $regex: new RegExp(`^${rawLeadId.trim()}$`, 'i') } },
+        { lanId: { $regex: new RegExp(`^${rawLeadId.trim()}$`, 'i') } },
+        ...(rawLeadId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: rawLeadId }] : [])
+      ]
+    });
+
+    if (!lead) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    let sourcingEmp = null;
+    if (lead.createdByEmpId || lead.createdById) {
+      const empId = lead.createdByEmpId || lead.createdById;
+      sourcingEmp = await Employee.findOne({
+        $or: [
+          ...(empId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: empId }] : []),
+          { empId: empId }
+        ]
+      });
+    }
+
+    const employeeName = lead.createdByName || sourcingEmp?.name || 'ro wallah';
+    const employeeRole = lead.createdByDesignation || lead.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'Relationship Officer (RO)';
+    const employeeEmpId = lead.createdByEmpId || sourcingEmp?.empId || '';
+    const employeePhone = sourcingEmp?.mobile || sourcingEmp?.phone || '';
+
+    let rmName = lead.rmName || sourcingEmp?.rmName || '';
+    let rmRole = 'Reporting Manager (RM)';
+    let armName = lead.armName || sourcingEmp?.armName || '';
+    let armRole = 'Assistant Regional Manager (ARM)';
+
+    let rmEmp = null;
+    if (sourcingEmp?.rmId) {
+      rmEmp = await Employee.findById(sourcingEmp.rmId);
+    }
+    if (!rmEmp && rmName) {
+      rmEmp = await Employee.findOne({ name: rmName });
+    }
+    if (!rmEmp && lead.zone) {
+      rmEmp = await Employee.findOne({ zone: lead.zone, zonalRole: 'RM' });
+    }
+    if (rmEmp) {
+      rmName = rmEmp.name;
+      rmRole = rmEmp.designation || rmEmp.zonalRole || rmEmp.role || 'Reporting Manager (RM)';
+    }
+
+    let armEmp = null;
+    if (sourcingEmp?.armId) {
+      armEmp = await Employee.findById(sourcingEmp.armId);
+    }
+    if (!armEmp && armName) {
+      armEmp = await Employee.findOne({ name: armName });
+    }
+    if (!armEmp && lead.zone) {
+      armEmp = await Employee.findOne({ zone: lead.zone, zonalRole: 'ARM' });
+    }
+    if (armEmp) {
+      armName = armEmp.name;
+      armRole = armEmp.designation || armEmp.zonalRole || armEmp.role || 'Assistant Regional Manager (ARM)';
+    }
+
+    if (!rmName) rmName = 'New RM Wallah';
+    if (!armName) armName = 'arm wallah';
+
+    return res.status(200).json({
+      success: true,
+      leadId: lead.leadId || rawLeadId,
+      customerName: lead.name,
+      employee: {
+        name: employeeName,
+        role: employeeRole,
+        empId: employeeEmpId,
+        phone: employeePhone
+      },
+      rm: {
+        name: rmName,
+        role: rmRole
+      },
+      arm: {
+        name: armName,
+        role: armRole
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
