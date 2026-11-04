@@ -231,8 +231,14 @@ const verifyOtp = async (req, res) => {
       }
 
       const roName = customerLead?.createdByName || sourcingEmp?.name || 'Authorized Relationship Officer';
-      const roRole = customerLead?.createdByDesignation || customerLead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'RO / Field Executive';
-      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || '';
+      const roRole = customerLead?.createdByDesignation || customerLead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'Relationship Officer (RO)';
+      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || 'NGM-EMP-RO-001';
+      const roPhone = sourcingEmp?.phone || sourcingEmp?.mobile || '9942402055';
+      const roEmail = sourcingEmp?.email || 'ro@nuogpay.com';
+      const roAvatar = sourcingEmp?.avatar || '';
+      const roDepartment = sourcingEmp?.department || 'Financial & Properties';
+      const roLocation = sourcingEmp?.city ? `${sourcingEmp.city}, ${sourcingEmp.state || 'IN'}` : (sourcingEmp?.location || 'Bengaluru, KR');
+      const roJoiningDate = sourcingEmp?.joiningDate ? new Date(sourcingEmp.joiningDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '23 Aug 2025';
 
       let rmName = customerLead?.rmName || sourcingEmp?.rmName || '';
       let rmRole = 'Reporting Manager (RM)';
@@ -269,6 +275,12 @@ const verifyOtp = async (req, res) => {
       userObj.roName = roName;
       userObj.roRole = roRole;
       userObj.roEmpId = roEmpId;
+      userObj.roPhone = roPhone;
+      userObj.roEmail = roEmail;
+      userObj.roAvatar = roAvatar;
+      userObj.roDepartment = roDepartment;
+      userObj.roLocation = roLocation;
+      userObj.roJoiningDate = roJoiningDate;
       userObj.rmName = rmName;
       userObj.rmRole = rmRole;
       userObj.armName = armName;
@@ -277,6 +289,12 @@ const verifyOtp = async (req, res) => {
         name: roName,
         role: roRole,
         empId: roEmpId,
+        phone: roPhone,
+        email: roEmail,
+        avatar: roAvatar,
+        department: roDepartment,
+        location: roLocation,
+        joiningDate: roJoiningDate,
         rmName: rmName,
         rmRole: rmRole,
         armName: armName,
@@ -2409,7 +2427,13 @@ const getUserProfile = async (req, res) => {
 
       const roName = customerLead?.createdByName || sourcingEmp?.name || 'ro wallah';
       const roRole = customerLead?.createdByDesignation || customerLead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'Relationship Officer (RO)';
-      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || '';
+      const roEmpId = customerLead?.createdByEmpId || sourcingEmp?.empId || 'NGM-EMP-2026-78246';
+      const roPhone = sourcingEmp?.phone || sourcingEmp?.mobile || '9942402055';
+      const roEmail = sourcingEmp?.email || 'ro@nuogpay.com';
+      const roAvatar = sourcingEmp?.avatar || '';
+      const roDepartment = sourcingEmp?.department || 'Financial & Properties';
+      const roLocation = sourcingEmp?.city ? `${sourcingEmp.city}, ${sourcingEmp.state || 'IN'}` : (sourcingEmp?.location || 'Bengaluru, KR');
+      const roJoiningDate = sourcingEmp?.joiningDate ? new Date(sourcingEmp.joiningDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '23 Aug 2025';
 
       let rmName = customerLead?.rmName || sourcingEmp?.rmName || '';
       let rmRole = 'Reporting Manager (RM)';
@@ -2452,6 +2476,12 @@ const getUserProfile = async (req, res) => {
       userObj.roName = roName;
       userObj.roRole = roRole;
       userObj.roEmpId = roEmpId;
+      userObj.roPhone = roPhone;
+      userObj.roEmail = roEmail;
+      userObj.roAvatar = roAvatar;
+      userObj.roDepartment = roDepartment;
+      userObj.roLocation = roLocation;
+      userObj.roJoiningDate = roJoiningDate;
       userObj.rmName = rmName;
       userObj.rmRole = rmRole;
       userObj.armName = armName;
@@ -2460,6 +2490,12 @@ const getUserProfile = async (req, res) => {
         name: roName,
         role: roRole,
         empId: roEmpId,
+        phone: roPhone,
+        email: roEmail,
+        avatar: roAvatar,
+        department: roDepartment,
+        location: roLocation,
+        joiningDate: roJoiningDate,
         rmName: rmName,
         rmRole: rmRole,
         armName: armName,

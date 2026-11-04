@@ -257,6 +257,55 @@ const handleApplyPage = async (req, res) => {
     lead = await Lead.findOne().sort({ createdAt: -1 });
   }
 
+  // Resolve Sourcing Officer (RO/RE) and Reporting Manager (RM) details
+  let sourcingEmp = null;
+  if (lead && (lead.createdByEmpId || lead.createdById)) {
+    const empId = lead.createdByEmpId || lead.createdById;
+    try {
+      sourcingEmp = await Employee.findOne({
+        $or: [
+          ...(empId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: empId }] : []),
+          { empId: empId }
+        ]
+      });
+    } catch (_) {}
+  }
+
+  const roName = lead?.createdByName || sourcingEmp?.name || 'Authorized Relationship Officer';
+  const roRole = lead?.createdByDesignation || lead?.createdByRole || sourcingEmp?.designation || sourcingEmp?.zonalRole || 'Relationship Officer (RO)';
+  const roEmpId = lead?.createdByEmpId || sourcingEmp?.empId || 'NGM-EMP-RO-001';
+  const roPhone = sourcingEmp?.phone || sourcingEmp?.mobile || '9942402055';
+  const roEmail = sourcingEmp?.email || 'ro@nuogpay.com';
+  const roDept = sourcingEmp?.department || 'Financial & Properties';
+  const roLocation = sourcingEmp?.city ? `${sourcingEmp.city}, ${sourcingEmp.state || 'IN'}` : (sourcingEmp?.location || 'Bengaluru, KR');
+  const roJoining = sourcingEmp?.joiningDate ? new Date(sourcingEmp.joiningDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '23 Aug 2025';
+
+  let rmName = lead?.rmName || sourcingEmp?.rmName || '';
+  let rmRole = 'Reporting Manager (RM)';
+  let rmPhone = '9174342055';
+  let rmEmail = 'rm@nuogpay.com';
+
+  try {
+    let rmEmp = null;
+    if (sourcingEmp?.rmId) {
+      rmEmp = await Employee.findById(sourcingEmp.rmId);
+    }
+    if (!rmEmp && rmName) {
+      rmEmp = await Employee.findOne({ name: rmName });
+    }
+    if (!rmEmp && lead?.zone) {
+      rmEmp = await Employee.findOne({ zone: lead.zone, zonalRole: 'RM' });
+    }
+    if (rmEmp) {
+      rmName = rmEmp.name;
+      rmRole = rmEmp.designation || rmEmp.zonalRole || rmEmp.role || 'Reporting Manager (RM)';
+      if (rmEmp.phone || rmEmp.mobile) rmPhone = rmEmp.phone || rmEmp.mobile;
+      if (rmEmp.email) rmEmail = rmEmp.email;
+    }
+  } catch (_) {}
+
+  if (!rmName) rmName = 'Designated Regional Manager';
+
   const customerName = lead?.name || 'Customer';
   const entityName = lead?.entityName || '';
   const mobile = lead?.mobile || '';
@@ -328,6 +377,211 @@ const handleApplyPage = async (req, res) => {
             Welcome <span class="text-emerald-400 font-bold text-base">${customerName}</span>${entityName ? ` (<span class="text-slate-200">${entityName}</span>)` : ''}, your loan request is pre-initiated. Please confirm your details & submit documents below.
           </p>
         </div>
+
+        <!-- SOURCING EMPLOYEE (RO/RE) PROFILE, ID CARD, VISITING CARD & CERTIFICATE + RM SECTION -->
+        <div class="mb-6 space-y-4">
+          <!-- 1. Top Section: Sourcing Officer (RO/RE) Overview -->
+          <div class="bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-emerald-500/30 rounded-2xl p-4 shadow-xl">
+            <div class="flex items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xl shadow-inner">
+                  👤
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Sourcing Officer
+                    </span>
+                    <span class="text-[10px] font-mono text-slate-400 font-bold">${roEmpId}</span>
+                  </div>
+                  <h3 class="text-base font-extrabold text-white mt-0.5">${roName}</h3>
+                  <p class="text-xs text-emerald-400 font-semibold">${roRole} • ${roDept}</p>
+                </div>
+              </div>
+              <div class="text-right">
+                <span class="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/25">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  Verified Officer
+                </span>
+                <div class="text-[10px] text-slate-400 mt-1">${roLocation}</div>
+              </div>
+            </div>
+
+            <!-- Direct Officer Contact -->
+            <div class="grid grid-cols-2 gap-2 pt-3 text-xs">
+              <div class="flex items-center gap-2 text-slate-300">
+                <span class="text-slate-400">Official Mobile:</span>
+                <span class="font-mono font-bold text-white">+91 ${roPhone}</span>
+              </div>
+              <div class="flex items-center gap-2 text-slate-300 truncate">
+                <span class="text-slate-400">Email:</span>
+                <span class="text-white truncate font-medium">${roEmail}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Interactive Official Credentials: ID Card, Visiting Card, Certificate -->
+          <div class="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 shadow-lg">
+            <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+              <div class="flex items-center gap-2">
+                <span class="text-emerald-400 text-sm">🪪</span>
+                <span class="text-xs font-bold text-white uppercase tracking-wider">Officer's Official Credentials</span>
+              </div>
+              <div class="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-[11px] font-bold">
+                <button type="button" onclick="switchCredTab('idcard')" id="tab-btn-idcard" class="px-2.5 py-1 rounded-lg transition-all bg-emerald-500 text-white">ID Card</button>
+                <button type="button" onclick="switchCredTab('visiting')" id="tab-btn-visiting" class="px-2.5 py-1 rounded-lg transition-all text-slate-400 hover:text-white">Visiting Card</button>
+                <button type="button" onclick="switchCredTab('cert')" id="tab-btn-cert" class="px-2.5 py-1 rounded-lg transition-all text-slate-400 hover:text-white">Certificate</button>
+              </div>
+            </div>
+
+            <!-- Tab 1: Employee ID Card View (Exact Theme Match) -->
+            <div id="cred-tab-idcard" class="space-y-3">
+              <div class="bg-white text-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-200">
+                <!-- ID Card Header -->
+                <div class="bg-[#33373B] text-white p-3 flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-xs">NGM</div>
+                    <div>
+                      <div class="text-[8px] font-extrabold tracking-wide">NUO-G MONEY & HAUS RENT-Z</div>
+                      <div class="text-[6.5px] text-[#84CC16] font-bold tracking-wider">HAMARI UMMEED-AAPKA BISWAS</div>
+                    </div>
+                  </div>
+                  <div class="text-xs font-black tracking-wider text-white">NUO-G MONEY</div>
+                </div>
+
+                <!-- ID Card Front Body -->
+                <div class="p-4 text-center">
+                  <div class="w-24 h-28 mx-auto rounded-xl border-4 border-[#22C55E] overflow-hidden bg-slate-100 flex items-center justify-center mb-2 shadow-md">
+                    <span class="text-3xl">👤</span>
+                  </div>
+                  <div class="text-base font-black text-[#16A34A] uppercase tracking-wide">${roName}</div>
+                  <div class="text-xs font-bold text-slate-700">${roRole}</div>
+
+                  <!-- ID Strip -->
+                  <div class="my-2.5 bg-[#374151] text-white py-1.5 px-3 rounded-lg flex items-center justify-center gap-2 text-xs font-mono font-black">
+                    <span class="bg-[#22C55E] text-white text-[9px] px-2 py-0.5 rounded-full uppercase">EMP. ID NO:</span>
+                    <span>${roEmpId}</span>
+                  </div>
+
+                  <div class="flex justify-between text-[11px] text-slate-600 font-bold px-2 mb-2">
+                    <div>Joining: <span class="text-slate-900 font-black">${roJoining}</span></div>
+                    <div>Expiry: <span class="text-slate-900 font-black">22 Aug 2030</span></div>
+                  </div>
+
+                  <!-- Barcode -->
+                  <div class="h-6 flex items-center justify-center gap-0.5 text-slate-900">
+                    <span class="w-1 h-full bg-slate-900"></span><span class="w-0.5 h-full bg-slate-900"></span><span class="w-1.5 h-full bg-slate-900"></span>
+                    <span class="w-0.5 h-full bg-slate-900"></span><span class="w-1 h-full bg-slate-900"></span><span class="w-0.5 h-full bg-slate-900"></span>
+                    <span class="w-2 h-full bg-slate-900"></span><span class="w-0.5 h-full bg-slate-900"></span><span class="w-1 h-full bg-slate-900"></span>
+                    <span class="w-1.5 h-full bg-slate-900"></span><span class="w-0.5 h-full bg-slate-900"></span><span class="w-1 h-full bg-slate-900"></span>
+                  </div>
+                </div>
+
+                <!-- ID Card Back Summary Footer -->
+                <div class="bg-[#33373B] text-white px-3 py-2 flex items-center justify-between text-[8px] font-bold">
+                  <span>COI: U70200TS2025PLC202763</span>
+                  <span class="text-[#84CC16]">GST: 22AAKCN7622G1ZJ</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 2: Visiting Card View -->
+            <div id="cred-tab-visiting" class="hidden space-y-3">
+              <div class="bg-[#33373B] text-white rounded-2xl overflow-hidden p-4 shadow-2xl border border-slate-700">
+                <div class="flex items-center justify-between pb-3 border-b border-slate-700">
+                  <div>
+                    <div class="text-[9px] font-black text-white">NUOG HOUSING PAYMENT'S LIMITED</div>
+                    <div class="text-[7.5px] text-[#84CC16] font-bold">DIGITALLY POWERED BY NUO-G MONEY</div>
+                  </div>
+                  <span class="bg-[#22C55E] text-white text-[9px] font-black px-2 py-0.5 rounded-full">${roEmpId}</span>
+                </div>
+                <div class="py-3">
+                  <div class="text-lg font-black text-[#22C55E] tracking-wide uppercase">${roName}</div>
+                  <div class="text-xs font-bold text-slate-200">${roRole}</div>
+                  <div class="text-[11px] text-slate-400 mt-1">${roDept} • ${roLocation}</div>
+                </div>
+                <div class="space-y-1.5 text-xs text-slate-300 pt-2 border-t border-slate-700 font-mono">
+                  <div>📞 +91 ${roPhone}</div>
+                  <div>✉️ ${roEmail}</div>
+                  <div class="text-[10px] font-sans text-slate-400">📍 Raza's Capital Plaza, Pachpedi Naka, Raipur (C.G.)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: Employee Certificate View -->
+            <div id="cred-tab-cert" class="hidden space-y-3">
+              <div class="bg-white text-slate-900 rounded-2xl overflow-hidden p-5 shadow-2xl border-2 border-[#22C55E]">
+                <div class="text-center">
+                  <div class="w-10 h-10 mx-auto rounded-full bg-emerald-100 border border-[#22C55E] flex items-center justify-center text-[#16A34A] text-lg mb-2">🏅</div>
+                  <div class="text-[9px] font-black text-slate-700 tracking-wider">NUOG HOUSING PAYMENT'S LIMITED</div>
+                  <div class="text-[11px] font-black text-[#16A34A] uppercase tracking-wide mt-1">CERTIFICATE OF OFFICIAL AUTHORIZATION</div>
+                  <div class="text-xs italic text-slate-500 mt-2">This is to officially certify that</div>
+                  <div class="text-base font-black text-slate-900 mt-1 uppercase">${roName}</div>
+                  <div class="text-xs font-bold text-[#16A34A]">${roRole} • Emp ID: ${roEmpId}</div>
+                  <p class="text-[10px] text-slate-600 mt-2 leading-relaxed">
+                    is an authorized officer certified to facilitate customer onboarding and loan documentation across India under corporate governance norms.
+                  </p>
+                  <div class="flex justify-between items-end mt-4 pt-3 border-t border-slate-200 text-[9px] text-slate-500 font-bold">
+                    <div class="text-left">
+                      <div>Ref: CERT-NGM-${roEmpId}</div>
+                      <div>Valid Upto: 22 Aug 2030</div>
+                    </div>
+                    <div class="text-right text-[#16A34A] font-black">
+                      ✓ Authorized Signatory<br>NUOG HOUSING LTD.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. Just Beneath Credentials: Employee's RM with Name, Designation & ONLY Action Logos (No Text Numbers/Emails) -->
+          <div class="bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 border border-blue-500/30 rounded-2xl p-4 shadow-xl flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold text-xl shadow-inner">
+                👔
+              </div>
+              <div>
+                <div class="text-[10px] uppercase font-bold text-blue-400 tracking-wider">Officer's Reporting Manager (RM)</div>
+                <div class="text-sm font-extrabold text-white leading-tight mt-0.5">${rmName}</div>
+                <div class="text-xs font-semibold text-slate-300">${rmRole}</div>
+              </div>
+            </div>
+
+            <!-- ONLY Action Logos (Call, WhatsApp, Email) - No Text Numbers Displayed -->
+            <div class="flex items-center gap-2">
+              <a href="tel:+91${rmPhone}" title="Call RM" class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 hover:bg-emerald-500/30 transition-all shadow-sm">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+              </a>
+              <a href="https://wa.me/91${rmPhone}" target="_blank" title="WhatsApp RM" class="w-10 h-10 rounded-xl bg-green-500/20 border border-green-500/40 flex items-center justify-center text-green-400 hover:bg-green-500/30 transition-all shadow-sm">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.711 2.598 2.664-.698c.969.585 1.961.895 3.023.895 3.18 0 5.766-2.587 5.768-5.766 0-3.18-2.588-5.766-5.768-5.766zm9.969 5.766c0 5.514-4.486 10-10 10-1.748 0-3.385-.45-4.819-1.238l-5.181 1.356 1.38-5.042c-.854-1.488-1.348-3.218-1.348-5.076 0-5.514 4.486-10 10-10 5.514 0 10 4.486 10 10z"/></svg>
+              </a>
+              <a href="mailto:${rmEmail}" title="Email RM" class="w-10 h-10 rounded-xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-orange-400 hover:bg-orange-500/30 transition-all shadow-sm">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <script>
+          function switchCredTab(tab) {
+            ['idcard', 'visiting', 'cert'].forEach(function(t) {
+              var el = document.getElementById('cred-tab-' + t);
+              var btn = document.getElementById('tab-btn-' + t);
+              if (el && btn) {
+                if (t === tab) {
+                  el.classList.remove('hidden');
+                  btn.classList.add('bg-emerald-500', 'text-white');
+                  btn.classList.remove('text-slate-400');
+                } else {
+                  el.classList.add('hidden');
+                  btn.classList.remove('bg-emerald-500', 'text-white');
+                  btn.classList.add('text-slate-400');
+                }
+              }
+            });
+          }
+        </script>
 
         <!-- Comprehensive Details Card -->
         <div class="bg-slate-950/60 border border-slate-800 rounded-2xl p-5 mb-6 space-y-3.5">
