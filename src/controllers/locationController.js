@@ -70,7 +70,87 @@ const reverseGeocode = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Latitude and Longitude are required' });
     }
 
-    // Free OpenStreetMap Nominatim reverse geocoder with polite User-Agent
+    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyBEss4wpsQ0o9WPBjDgHsSByUzFuo2oSNE';
+
+    // 1. First priority: Google Maps Geocoding API if key is present
+    if (googleApiKey) {
+      try {
+        const googleUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${googleApiKey}`;
+        const gRes = await new Promise((resolve, reject) => {
+          https.get(googleUrl, (resp) => {
+            let data = '';
+            resp.on('data', chunk => data += chunk);
+            resp.on('end', () => resolve(data));
+          }).on('error', reject);
+        });
+
+        const parsedG = JSON.parse(gRes);
+        if (parsedG.status === 'OK' && parsedG.results && parsedG.results.length > 0) {
+          const firstResult = parsedG.results[0];
+          const components = firstResult.address_components || [];
+
+          let houseNo = '';
+          let street = '';
+          let landmark = '';
+          let area = '';
+          let city = '';
+          let district = '';
+          let state = '';
+          let rawPincode = '';
+          let country = 'India';
+
+          for (const c of components) {
+            const types = c.types || [];
+            if (types.includes('street_number') || types.includes('premise') || types.includes('subpremise')) {
+              houseNo = c.long_name;
+            } else if (types.includes('route')) {
+              street = c.long_name;
+            } else if (types.includes('point_of_interest') || types.includes('establishment')) {
+              landmark = c.long_name;
+            } else if (types.includes('sublocality_level_2') || types.includes('sublocality_level_3')) {
+              if (!landmark) landmark = c.long_name;
+            } else if (types.includes('sublocality') || types.includes('sublocality_level_1') || types.includes('neighborhood')) {
+              area = c.long_name;
+            } else if (types.includes('locality')) {
+              city = c.long_name;
+            } else if (types.includes('administrative_area_level_2') || types.includes('administrative_area_level_3')) {
+              district = c.long_name;
+            } else if (types.includes('administrative_area_level_1')) {
+              state = c.long_name;
+            } else if (types.includes('postal_code')) {
+              rawPincode = c.long_name.replace(/\D/g, '').slice(0, 6);
+            } else if (types.includes('country')) {
+              country = c.long_name;
+            }
+          }
+
+          if (!city && district) city = district;
+          if (!district && city) district = city;
+
+          return res.status(200).json({
+            success: true,
+            formattedAddress: firstResult.formatted_address || '',
+            houseNo,
+            street,
+            landmark,
+            area,
+            city,
+            district,
+            state,
+            pincode: rawPincode,
+            country,
+            coordinates: {
+              latitude: Number(latitude),
+              longitude: Number(longitude)
+            }
+          });
+        }
+      } catch (gErr) {
+        console.error('Google Maps Geocoding failed, falling back to OSM:', gErr.message);
+      }
+    }
+
+    // 2. Fallback to OpenStreetMap Nominatim reverse geocoder
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&addressdetails=1`;
 
     const options = {
