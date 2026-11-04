@@ -70,7 +70,7 @@ const reverseGeocode = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Latitude and Longitude are required' });
     }
 
-    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyBEss4wpsQ0o9WPBjDgHsSByUzFuo2oSNE';
+    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY;
 
     // 1. First priority: Google Maps Geocoding API if key is present
     if (googleApiKey) {
