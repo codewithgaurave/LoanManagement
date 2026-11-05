@@ -70,6 +70,16 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'success', message: 'API is running' });
 });
 
+// System Status endpoint (Remote site suspension / payment lock controller)
+app.get('/api/system/status', (req, res) => {
+  const isSuspended = process.env.SERVICE_SUSPENDED === 'true';
+  res.status(200).json({
+    status: 'success',
+    isSuspended,
+    message: isSuspended ? 'Service Suspended due to pending payment dues' : 'Service Active'
+  });
+});
+
 // Routes
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
